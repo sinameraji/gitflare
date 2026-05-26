@@ -55,14 +55,29 @@ export async function runInit(
   p.log.info(`Repo: ${kleur.cyan(`${owner}/${repo}`)}`);
 
   // ---------- 2. GitHub PAT ----------
-  p.log.info(`If you don't have a PAT, create one (scopes: repo, admin:repo_hook):\n  ${kleur.gray(GITHUB_PAT_URL)}`);
-  const ghToken = await p.password({
-    message: "GitHub personal access token",
-    validate: (s) => (!s ? "required" : undefined),
-  });
-  if (p.isCancel(ghToken)) return p.cancel("Cancelled."), undefined;
+  // Load saved tokens up front so we can offer reuse.
+  const savedCfg = await loadConfig();
 
-  const gh = new GitHubClient(ghToken as string);
+  let ghToken: string | undefined = savedCfg.github?.token;
+  if (ghToken) {
+    const reuse = await p.confirm({
+      message: `Reuse saved GitHub token? ${kleur.gray("(works across all your repos)")}`,
+      initialValue: true,
+    });
+    if (p.isCancel(reuse)) return p.cancel("Cancelled."), undefined;
+    if (!reuse) ghToken = undefined;
+  }
+  if (!ghToken) {
+    p.log.info(`If you don't have a PAT, create one (scopes: repo, admin:repo_hook):\n  ${kleur.gray(GITHUB_PAT_URL)}`);
+    const v = await p.password({
+      message: "GitHub personal access token",
+      validate: (s) => (!s ? "required" : undefined),
+    });
+    if (p.isCancel(v)) return p.cancel("Cancelled."), undefined;
+    ghToken = v as string;
+  }
+
+  const gh = new GitHubClient(ghToken);
   const ghSpinner = p.spinner();
   ghSpinner.start("Verifying GitHub token");
   let ghUser: { login: string };
@@ -74,26 +89,41 @@ export async function runInit(
   } catch (e) {
     ghSpinner.stop("GitHub verification failed");
     p.log.error((e as Error).message);
+    if (savedCfg.github?.token === ghToken) {
+      p.log.warn("Saved token failed. Re-run and choose 'No' when asked to reuse to enter a fresh one.");
+    }
     return;
   }
 
   // ---------- 3. Cloudflare token ----------
-  p.log.info(
-    [
-      `Create a Cloudflare API token at ${kleur.gray(TOKEN_URL)}`,
-      `with these ${kleur.bold("3 account-level permissions")}:`,
-      `  • ${kleur.cyan("Workers Scripts")}        — Edit`,
-      `  • ${kleur.cyan("Artifacts")}              — Edit  ${kleur.gray("(adds Read implicitly)")}`,
-      `  • ${kleur.cyan("Account Settings")}       — Read`,
-    ].join("\n"),
-  );
-  const cfToken = await p.password({
-    message: "Cloudflare API token",
-    validate: (s) => (!s ? "required" : undefined),
-  });
-  if (p.isCancel(cfToken)) return p.cancel("Cancelled."), undefined;
+  let cfToken: string | undefined = savedCfg.cloudflare?.token;
+  if (cfToken) {
+    const reuse = await p.confirm({
+      message: `Reuse saved Cloudflare token? ${kleur.gray("(works for all repos on the same account)")}`,
+      initialValue: true,
+    });
+    if (p.isCancel(reuse)) return p.cancel("Cancelled."), undefined;
+    if (!reuse) cfToken = undefined;
+  }
+  if (!cfToken) {
+    p.log.info(
+      [
+        `Create a Cloudflare API token at ${kleur.gray(TOKEN_URL)}`,
+        `with these ${kleur.bold("3 account-level permissions")}:`,
+        `  • ${kleur.cyan("Workers Scripts")}        — Edit`,
+        `  • ${kleur.cyan("Artifacts")}              — Edit  ${kleur.gray("(adds Read implicitly)")}`,
+        `  • ${kleur.cyan("Account Settings")}       — Read`,
+      ].join("\n"),
+    );
+    const v = await p.password({
+      message: "Cloudflare API token",
+      validate: (s) => (!s ? "required" : undefined),
+    });
+    if (p.isCancel(v)) return p.cancel("Cancelled."), undefined;
+    cfToken = v as string;
+  }
 
-  const cf = new CloudflareClient(cfToken as string);
+  const cf = new CloudflareClient(cfToken);
   const cfSpinner = p.spinner();
   cfSpinner.start("Verifying Cloudflare token");
   let accountId: string;
@@ -119,6 +149,9 @@ export async function runInit(
   } catch (e) {
     cfSpinner.stop("Cloudflare verification failed");
     p.log.error((e as Error).message);
+    if (savedCfg.cloudflare?.token === cfToken) {
+      p.log.warn("Saved token failed. Re-run and choose 'No' when asked to reuse to enter a fresh one.");
+    }
     return;
   }
 
@@ -186,7 +219,7 @@ export async function runInit(
   let deployedUrl: string;
   try {
     const deploy = await wranglerDeploy({
-      cloudflareApiToken: cfToken as string,
+      cloudflareApiToken: cfToken,
       accountId,
       workerName,
       artifactsNamespace: namespace,
@@ -194,8 +227,8 @@ export async function runInit(
     });
     deployedUrl = deploy.workerUrl;
     depSpin.message("Setting Worker secrets");
-    await wranglerSecret(deploy.workDir, cfToken as string, "GITHUB_WEBHOOK_SECRET", webhookSecret);
-    await wranglerSecret(deploy.workDir, cfToken as string, "GITHUB_TOKEN", ghToken as string);
+    await wranglerSecret(deploy.workDir, cfToken, "GITHUB_WEBHOOK_SECRET", webhookSecret);
+    await wranglerSecret(deploy.workDir, cfToken, "GITHUB_TOKEN", ghToken);
     depSpin.stop(`Worker live at ${kleur.cyan(deployedUrl)}`);
   } catch (e) {
     depSpin.stop("Worker deploy failed");
@@ -227,8 +260,10 @@ export async function runInit(
 
   // ---------- 8. Persist local config ----------
   const cfg = await loadConfig();
-  cfg.github = { token: ghToken as string };
-  cfg.cloudflare = { token: cfToken as string };
+  cfg.github = { token: ghToken };
+  cfg.cloudflare = { token: cfToken };
+  // Avoid duplicate entries if the user re-runs init for the same repo.
+  cfg.repos = cfg.repos.filter((r) => r.githubFullName !== `${owner}/${repo}`);
   cfg.repos.push({
     githubFullName: `${owner}/${repo}`,
     cloudflareAccountId: accountId,
