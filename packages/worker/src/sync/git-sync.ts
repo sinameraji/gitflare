@@ -45,23 +45,24 @@ export async function syncGithubToArtifacts(
   const fs = new MemFs();
   const dir = "/repo";
 
-  await git.init({ fs, dir, defaultBranch: "main" });
-
   const githubUrl = `https://github.com/${params.githubFullName}.git`;
   const isNewBranch = /^0+$/.test(params.beforeSha);
+  const branchName = params.ref.replace(/^refs\/heads\//, "");
 
-  // Fetch from GitHub. For new branches we don't know how deep to go; default
-  // to a reasonable depth and let isomorphic-git extend if needed. For
-  // existing branches, depth covers the delta with headroom.
-  await git.fetch({
+  // Shallow clone of just this branch from GitHub. clone() configures the
+  // remote + refspec internally so we don't hit the "no fetch refspec"
+  // error that bare init+fetch produces. depth covers the delta with
+  // headroom; for new branches we go deeper.
+  await git.clone({
     fs,
     http,
     dir,
     url: githubUrl,
-    ref: params.ref.replace(/^refs\/heads\//, ""),
+    ref: branchName,
     singleBranch: true,
     depth: isNewBranch ? 200 : 50,
-    tags: true,
+    noCheckout: true,
+    noTags: false,
     onAuth: () => ({
       username: "x-access-token",
       password: params.githubToken,

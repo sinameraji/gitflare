@@ -50,11 +50,7 @@ export async function getRepoContent(
   }
   const password = tokenSecret(rawToken);
 
-  const fs = new MemFs();
-  const dir = "/repo";
-  await git.init({ fs, dir, defaultBranch: "main" });
-
-  // First: discover the default branch via remote ref listing.
+  // Discover the default branch via remote ref listing first.
   const refs = await git.listServerRefs({
     http,
     url: remote,
@@ -70,8 +66,12 @@ export async function getRepoContent(
     ? defaultRef.ref.replace(/^refs\/heads\//, "")
     : "main";
 
-  // Shallow fetch just the tip of the default branch.
-  await git.fetch({
+  // Shallow clone (depth 1, no checkout) — this gets us the tip commit's
+  // tree + blobs without setting up a working directory or needing to
+  // configure a refspec the way bare git.fetch() does.
+  const fs = new MemFs();
+  const dir = "/repo";
+  await git.clone({
     fs,
     http,
     dir,
@@ -79,6 +79,8 @@ export async function getRepoContent(
     ref: branchName,
     singleBranch: true,
     depth: 1,
+    noCheckout: true,
+    noTags: true,
     onAuth: () => ({ username: "x", password }),
   });
 
