@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { verifyGithubSignature } from "./github/webhook";
 import { lookupArtifactsRepoEntry, parseRepoMap, type Env } from "./env";
 import { repoStubFor } from "./durable-objects/repo";
+import { listArtifactsRefs } from "./artifacts/refs";
 import { Home, type HomeRepo } from "./ui/home";
 
 export { RepoDO } from "./durable-objects/repo";
@@ -25,17 +26,26 @@ app.get("/", async (c) => {
       githubFullName: github,
       artifactsRepoName: entry.name,
       artifactsRemote: entry.remote,
-      refs: [],
+      branches: [],
+      syncedRefs: [],
     };
+    // Live ref listing from the Artifacts repo (smart HTTP protocol).
+    try {
+      const repoHandle = await c.env.ARTIFACTS.get(entry.name);
+      r.branches = await listArtifactsRefs(repoHandle, entry.remote);
+    } catch (err) {
+      r.error = `Artifacts ref list failed: ${(err as Error).message}`;
+    }
+    // Per-webhook sync state from the DO.
     try {
       const stub = repoStubFor(c.env, entry.name);
       const resp = await stub.fetch("https://repo-do/state");
       if (resp.ok) {
-        const j = (await resp.json()) as { refs: HomeRepo["refs"] };
-        r.refs = j.refs;
+        const j = (await resp.json()) as { refs: HomeRepo["syncedRefs"] };
+        r.syncedRefs = j.refs;
       }
     } catch {
-      // Soft fail — sync hasn't happened yet.
+      // Soft fail.
     }
     repos.push(r);
   }

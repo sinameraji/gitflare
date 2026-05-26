@@ -18,4 +18,4 @@ new_sqlite_classes = ["RepoDO"]
 
 [vars]
 GITFLARE_VERSION = "0.0.0"
-REPO_MAP = "{\"sinameraji/kimiflare\":\"sinameraji--kimiflare\"}"
+REPO_MAP = "{\"sinameraji/kimiflare\":{\"name\":\"sinameraji--kimiflare\",\"remote\":\"https://b35e975c549e4e6b888ed6a6d436d89f.artifacts.cloudflare.net/git/gitflare/sinameraji--kimiflare.git\"}}"
