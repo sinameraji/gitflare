@@ -1,0 +1,32 @@
+name = "gitflare"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Bindings are provisioned by `gitflare init` against the user's account.
+# This file is a template; the CLI rewrites it with the user's actual IDs.
+
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "gitflare"
+# database_id = "<provisioned-by-cli>"
+
+# [[r2_buckets]]
+# binding = "BLOBS"
+# bucket_name = "<provisioned-by-cli>"
+
+# [[durable_objects.bindings]]
+# name = "REPO"
+# class_name = "RepoDO"
+
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["RepoDO"]
+
+[vars]
+GITFLARE_VERSION = "0.0.0"
+
+# Secrets (set with `wrangler secret put` or written by the CLI):
+#   GITHUB_WEBHOOK_SECRET — for HMAC verification
+#   GITHUB_TOKEN         — for API calls back to GitHub
+#   ARTIFACTS_TOKEN      — for Artifacts API

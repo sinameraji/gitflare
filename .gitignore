@@ -1,0 +1,33 @@
+node_modules/
+dist/
+build/
+.wrangler/
+.dev.vars
+.env
+.env.local
+.env.*.local
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# test/coverage
+coverage/
+.nyc_output/
+
+# package manager artifacts
+.pnpm-store/
+
+# local user credentials (never committed)
+.gitflare/
+*.credentials

@@ -1,0 +1,19 @@
+GitFlare — License (provisional)
+
+Copyright (c) 2026 GitFlare contributors
+
+This project's license is not yet finalized. The working intent is a
+source-available license with eventual conversion to an OSI-approved
+license (FSL-1.1-Apache-2.0 or similar), permitting:
+
+  * unrestricted self-hosting for personal and internal-business use
+  * forking and modification for those purposes
+  * contributions back to this repository
+
+and restricting:
+
+  * offering GitFlare as a hosted commercial service to third parties
+
+Until a final license file replaces this placeholder, all rights are
+reserved. Open an issue if you want to use this code in a way the
+working intent doesn't cover and we'll figure it out.
