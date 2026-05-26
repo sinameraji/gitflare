@@ -9,12 +9,7 @@ import {
   parseGithubUrl,
   randomHex,
 } from "../util.js";
-import {
-  workerPackageDir,
-  writeWranglerToml,
-  wranglerDeploy,
-  wranglerSecret,
-} from "../wrangler.js";
+import { wranglerDeploy, wranglerSecret } from "../wrangler.js";
 
 export interface InitOptions {
   session?: string;
@@ -175,21 +170,11 @@ export async function runInit(
     [`${owner}/${repo}`]: { name: artifactsRepoName, remote: artifactsRemote },
   };
 
-  const wDir = workerPackageDir();
   const depSpin = p.spinner();
-  depSpin.start("Writing wrangler.toml + deploying Worker");
+  depSpin.start("Deploying Worker");
   let deployedUrl: string;
   try {
-    await writeWranglerToml({
-      workerPackageDir: wDir,
-      cloudflareApiToken: cfToken as string,
-      accountId,
-      workerName,
-      artifactsNamespace: namespace,
-      repoMap,
-    });
     const deploy = await wranglerDeploy({
-      workerPackageDir: wDir,
       cloudflareApiToken: cfToken as string,
       accountId,
       workerName,
@@ -198,8 +183,8 @@ export async function runInit(
     });
     deployedUrl = deploy.workerUrl;
     depSpin.message("Setting Worker secrets");
-    await wranglerSecret(wDir, cfToken as string, "GITHUB_WEBHOOK_SECRET", webhookSecret);
-    await wranglerSecret(wDir, cfToken as string, "GITHUB_TOKEN", ghToken as string);
+    await wranglerSecret(deploy.workDir, cfToken as string, "GITHUB_WEBHOOK_SECRET", webhookSecret);
+    await wranglerSecret(deploy.workDir, cfToken as string, "GITHUB_TOKEN", ghToken as string);
     depSpin.stop(`Worker live at ${kleur.cyan(deployedUrl)}`);
   } catch (e) {
     depSpin.stop("Worker deploy failed");

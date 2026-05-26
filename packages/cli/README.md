@@ -1,44 +1,55 @@
-# gitflare CLI
+# gitflare
 
-The CLI for GitFlare. One command provisions an entire GitFlare instance into your Cloudflare account.
+> GitHub stays your source of truth. GitFlare is the faster, always-up mirror on your own Cloudflare account.
 
-## Install (during development)
+One command mirrors any GitHub repo onto your own Cloudflare account using [Artifacts](https://developers.cloudflare.com/artifacts/) for git storage, a [Cloudflare Worker](https://developers.cloudflare.com/workers/) for the dashboard + webhook sync, and a per-repo [Durable Object](https://developers.cloudflare.com/durable-objects/) for state. **GitFlare-the-company never sees your code, your token, or your traffic** — everything runs on infrastructure you own.
+
+## Install + run
+
+No install needed:
 
 ```bash
-pnpm install
-pnpm --filter gitflare build
-node packages/cli/dist/index.js init github.com/owner/repo
+npx gitflare init github.com/<owner>/<repo>
 ```
 
-Or use tsx for live development:
+Or install globally:
 
 ```bash
-pnpm --filter gitflare dev -- init github.com/owner/repo
+npm i -g gitflare
+gitflare init github.com/<owner>/<repo>
 ```
 
 ## What `init` does
 
-1. Prompts for a **GitHub PAT** (scopes: `repo`, `admin:repo_hook`).
-2. Prompts for a **Cloudflare API token** with these scopes:
-   - Workers Scripts: Edit
-   - Workers Routes: Edit
-   - Durable Objects: Edit (via Workers Scripts)
-   - D1: Edit, R2: Edit, Workers KV: Edit
-   - Artifacts: Read + Edit
-   - Account Settings: Read
-3. Lists your Cloudflare accounts and resolves your workers.dev subdomain.
-4. Shows the *contract* — exactly what will be provisioned — and waits for confirmation.
-5. Creates an Artifacts namespace (`gitflare`) if it doesn't exist.
-6. Calls Artifacts `POST /repos/:name/import` to seed the mirror from GitHub (one-time, server-side history pull).
-7. Writes `wrangler.toml` with the right bindings + account ID + REPO_MAP.
-8. Runs `pnpm exec wrangler deploy` in the worker package.
-9. Sets `GITHUB_WEBHOOK_SECRET` and `GITHUB_TOKEN` as Worker secrets via `wrangler secret put`.
-10. Installs a webhook on the GitHub repo pointing at `https://<worker>.workers.dev/webhooks/github` with the HMAC secret.
-11. Saves config to `~/.gitflare/credentials.json` (mode 0600).
+1. Asks for a **GitHub personal access token** (`repo` + `admin:repo_hook` scopes).
+2. Asks for a **Cloudflare API token** with three account-level permissions:
+   - Workers Scripts → Edit
+   - Artifacts → Edit
+   - Account Settings → Read
+3. Shows you the exact resources it's about to provision, waits for `y`.
+4. Imports your GitHub repo into Artifacts (one-time server-side seed).
+5. Deploys a Cloudflare Worker that mirrors future pushes incrementally and serves a dashboard at `https://<repo>.<your-subdomain>.workers.dev`.
+6. Installs a GitHub webhook on the repo pointing at the Worker.
+7. Saves config to `~/.gitflare/credentials.json` (mode 0600).
 
-After this, every `git push` to GitHub triggers an incremental sync into Artifacts within seconds.
+## What you get
 
-## Other commands (stubs / partial)
+A web dashboard showing your repo's branches, file tree, and rendered README — served from your own Worker, on your account, on Cloudflare's edge. Push to GitHub → mirror updates within seconds. When GitHub is down, the dashboard still works (and v0.2 will keep deploys working too).
 
-- `gitflare status` — lists provisioned repos from local config.
-- `gitflare resync`, `gitflare detach`, `gitflare logs` — planned (later milestones).
+## Requirements
+
+- Node ≥ 20
+- A Cloudflare account with [Artifacts beta access](https://developers.cloudflare.com/artifacts/)
+- A GitHub repo you can install webhooks on
+
+## Pricing
+
+Three account-level Cloudflare permissions, all on the free tier. Realistic cost for a solo developer mirroring one repo: **about $5/month** for Workers Paid (needed for Durable Objects), plus pennies for Artifacts. No charge to GitFlare-the-company — there isn't one.
+
+## Status
+
+Pre-alpha. v0.1 is the read-replica cut: GitHub stays canonical, GitFlare mirrors. CI/CD (v0.2), team collaboration (v0.4), and cross-tenant federation via Cloudflare Mesh (v0.5) are on the roadmap — see [PLAN.md](https://github.com/sinameraji/gitflare/blob/main/PLAN.md).
+
+## License
+
+[MIT](https://github.com/sinameraji/gitflare/blob/main/LICENSE) © Sina Meraji and GitFlare contributors.
