@@ -71,7 +71,7 @@ git push origin main
 
 - Your Worker, your Artifacts repo, your D1, your R2 — all on your Cloudflare account.
 - Cloudflare's free tier + $5/month Workers Paid covers a solo developer.
-- GitFlare-the-company never sees your code, your token, or your traffic.
+- GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed CLI you run; there's no server in the loop.
 
 ## Repository layout
 

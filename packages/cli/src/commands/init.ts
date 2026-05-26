@@ -168,7 +168,7 @@ export async function runInit(
   p.log.message(`  Artifacts repo: ${kleur.cyan(artifactsRepoName)}`);
   p.log.message(`  Importing from: ${kleur.cyan(ghRepo.clone_url)}`);
   p.log.message(`  GitHub webhook: ${kleur.cyan(`${owner}/${repo}`)} → ${kleur.gray(workerUrl + "/webhooks/github")}`);
-  p.log.message(kleur.gray("  All resources live in your Cloudflare account. GitFlare-the-company sees none of this."));
+  p.log.message(kleur.gray("  All resources live in your Cloudflare account. Nothing routes through GitFlare."));
 
   const proceed = await p.confirm({ message: "Proceed?", initialValue: true });
   if (p.isCancel(proceed) || !proceed) return p.cancel("Cancelled."), undefined;

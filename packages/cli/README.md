@@ -2,7 +2,7 @@
 
 > GitHub stays your source of truth. GitFlare is the faster, always-up mirror on your own Cloudflare account.
 
-One command mirrors any GitHub repo onto your own Cloudflare account using [Artifacts](https://developers.cloudflare.com/artifacts/) for git storage, a [Cloudflare Worker](https://developers.cloudflare.com/workers/) for the dashboard + webhook sync, and a per-repo [Durable Object](https://developers.cloudflare.com/durable-objects/) for state. **GitFlare-the-company never sees your code, your token, or your traffic** — everything runs on infrastructure you own.
+One command mirrors any GitHub repo onto your own Cloudflare account using [Artifacts](https://developers.cloudflare.com/artifacts/) for git storage, a [Cloudflare Worker](https://developers.cloudflare.com/workers/) for the dashboard + webhook sync, and a per-repo [Durable Object](https://developers.cloudflare.com/durable-objects/) for state. **GitFlare never sees your code, your token, or your traffic** — there's no server in the loop. It's an MIT-licensed CLI; everything it provisions runs on infrastructure you own.
 
 ## Install + run
 
@@ -44,7 +44,7 @@ A web dashboard showing your repo's branches, file tree, and rendered README —
 
 ## Pricing
 
-Three account-level Cloudflare permissions, all on the free tier. Realistic cost for a solo developer mirroring one repo: **about $5/month** for Workers Paid (needed for Durable Objects), plus pennies for Artifacts. No charge to GitFlare-the-company — there isn't one.
+Three account-level Cloudflare permissions, all on the free tier. Realistic cost for a solo developer mirroring one repo: **about $5/month** for Workers Paid (needed for Durable Objects), plus pennies for Artifacts. GitFlare itself is free — it's an MIT-licensed CLI, not a hosted service.
 
 ## Status
 
