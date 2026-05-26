@@ -1,10 +1,8 @@
-name = "gitflare"
-main = "src/index.tsx"
+name = "gitflare-sinameraji--kimiflare"
+main = "src/index.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
-
-# Most bindings are provisioned by `gitflare init` against the user's account.
-# This file is a template; the CLI rewrites it with the user's actual IDs.
+account_id = "b35e975c549e4e6b888ed6a6d436d89f"
 
 [[artifacts]]
 binding = "ARTIFACTS"
@@ -18,21 +16,6 @@ class_name = "RepoDO"
 tag = "v1"
 new_sqlite_classes = ["RepoDO"]
 
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "gitflare"
-# database_id = "<provisioned-by-cli>"
-
-# [[r2_buckets]]
-# binding = "BLOBS"
-# bucket_name = "<provisioned-by-cli>"
-
 [vars]
 GITFLARE_VERSION = "0.0.0"
-# Per-deploy mapping of "github-owner/repo" → "artifacts-repo-name".
-# The CLI writes this on provisioning. JSON-encoded string.
-REPO_MAP = "{}"
-
-# Secrets (set with `wrangler secret put` or written by the CLI):
-#   GITHUB_WEBHOOK_SECRET — for HMAC verification on incoming webhooks
-#   GITHUB_TOKEN          — for API calls back to GitHub (incremental fetch)
+REPO_MAP = "{\"sinameraji/kimiflare\":\"sinameraji--kimiflare\"}"

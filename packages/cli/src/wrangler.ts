@@ -33,7 +33,7 @@ export interface DeployParams {
 
 export async function writeWranglerToml(p: DeployParams): Promise<void> {
   const toml = `name = "${p.workerName}"
-main = "src/index.ts"
+main = "src/index.tsx"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "${p.accountId}"
