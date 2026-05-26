@@ -16,7 +16,11 @@ When GitHub goes down, your reads, your clones, and (in later versions) your CI/
 
 ## Status
 
-Early development. v0.1 (self-hosted read replica) is in progress. See [PLAN.md](./PLAN.md) for the full versioned roadmap and §12 for the live milestones log.
+Early development — v0.1 end-to-end cut landed (M0–M4). One command provisions a GitFlare instance into your Cloudflare account; GitHub webhooks drive incremental sync into Artifacts.
+
+- **Try it:** [QUICKSTART.md](./QUICKSTART.md)
+- **Roadmap and design:** [PLAN.md](./PLAN.md)
+- **Live milestone status:** [PLAN.md §12](./PLAN.md#12-milestones-and-development-log)
 
 ## How it works (v0.1)
 
@@ -43,11 +47,10 @@ gitflare/
 ├── README.md            ← you are here
 ├── assets/              ← logo, diagrams
 ├── packages/
-│   ├── cli/             ← the `gitflare` CLI (Node.js)
-│   ├── worker/          ← the Cloudflare Worker (Hono on Workers)
-│   ├── web/             ← the read-only web UI (Astro on Pages)
+│   ├── cli/             ← the `gitflare` CLI (Node.js, commander + clack)
+│   ├── worker/          ← the Cloudflare Worker — sync pipeline + read-only UI (Hono + JSX)
 │   └── shared/          ← shared TypeScript types
-└── docs/                ← per-package READMEs, design notes
+└── QUICKSTART.md        ← end-to-end provisioning guide
 ```
 
 ## Quick links

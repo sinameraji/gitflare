@@ -1,5 +1,5 @@
 name = "gitflare"
-main = "src/index.ts"
+main = "src/index.tsx"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 

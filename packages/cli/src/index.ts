@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { runInit } from "./commands/init";
-import { runStatus } from "./commands/status";
+import { runInit } from "./commands/init.js";
+import { runStatus } from "./commands/status.js";
 
 const program = new Command();
 

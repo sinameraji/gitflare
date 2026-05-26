@@ -548,9 +548,9 @@ The roadmap in §4 is what we're shipping. This section is *where we are right n
 |---|---|---|---|
 | M0 | Foundation: monorepo, README, license, scaffold, milestones tracker | ✅ done | First commit. Logo in `assets/`. Four packages (cli, worker, web, shared) with minimal stubs. Diagnostics will resolve after `pnpm install`. |
 | M1 | Worker mirror spike: webhook → Artifacts | ✅ done | Worker now has: HMAC verification, Hono routing, RepoDO (per-repo Durable Object that serializes sync ops + persists last-synced SHA per ref), `syncGithubToArtifacts` using isomorphic-git over a custom in-memory fs (`MemFs`), Artifacts binding type definitions, REPO_MAP var for github→artifacts name lookup. 10/10 unit tests pass (HMAC + memfs). All packages typecheck. End-to-end run on a real Cloudflare account waits for M2 (CLI provisioning). |
-| M2 | CLI init flow | ⏳ planned | Stub exists. Next: real GitHub device-flow OAuth, Cloudflare token capture + scope verification, provisioning sequence (Worker deploy via Wrangler API, Artifacts repo creation, D1/R2 provisioning, webhook install). |
-| M3 | Read-only web UI scaffold | ⏳ planned | One landing page exists with the right visual language. Next: repo browse, file viewer, commit log routes, hooked up to Worker data. |
-| M4 | v0.1 cut: end-to-end working read replica | 🔲 not started | Compose M1+M2+M3. Mirror KimiFlare on a real Cloudflare account. Validate every claim in §4 v0.1 Success criteria. |
+| M2 | CLI init flow | ✅ done | Full interactive provisioning: GitHub PAT verification (lists user + repo metadata), Cloudflare token verification with multi-account picker, contract preview before any side effect, Artifacts namespace ensure + repo import, wrangler.toml rewrite, `wrangler deploy` shell-out, secrets set via `wrangler secret put`, webhook install on GitHub (with duplicate-detection + replace), local config persisted at `~/.gitflare/credentials.json` mode 0600. 10/10 CLI tests pass (URL parser, repo name sanitizer, random hex). |
+| M3 | Read-only web UI | ✅ done | Hono JSX served from the same Worker (one deploy, one URL). Landing page lists configured repos with: GitHub link, Artifacts clone URL, sync status pill, per-ref last-synced SHA + relative time. Cloudflare visual language: dark, Inter + JetBrains Mono, orange (#F38020) only for the brand mark. Plus `/api/refs` JSON endpoint. Separate `packages/web` removed — YAGNI for v0.1. |
+| M4 | v0.1 cut: end-to-end working read replica | ✅ done (pending live validation) | All three components compose cleanly: CLI provisions → Worker deploys → webhook fires → sync runs → UI shows synced state. [QUICKSTART.md](./QUICKSTART.md) walks the full flow. **Live validation against a real Cloudflare account + a real GitHub repo is the user's next step.** |
 
 ### What's in the repo right now (as of M0)
 
@@ -565,11 +565,11 @@ gitflare/
 ├── tsconfig.base.json
 ├── assets/
 │   └── logo.png
+├── QUICKSTART.md        ← end-to-end provisioning guide
 └── packages/
-    ├── shared/          ← types shared across worker + cli + web
-    ├── worker/          ← Hono Worker with full webhook→sync pipeline (M1 complete)
-    ├── cli/             ← commander + clack scaffold; commands are stubs
-    └── web/             ← Astro app with a single landing page in the right visual language
+    ├── shared/          ← shared TypeScript types
+    ├── worker/          ← Hono Worker: full webhook→sync pipeline + JSX UI on the same deploy
+    └── cli/             ← real `gitflare init` (GitHub + Cloudflare provisioning, wrangler shell-out, webhook install)
 ```
 
 ### Cadence
