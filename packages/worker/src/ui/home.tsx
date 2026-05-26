@@ -1,5 +1,6 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
+import { LOGO_PNG_DATA_URL } from "./logo-data";
 
 export interface HomeRepo {
   githubFullName: string;
@@ -20,7 +21,7 @@ export const Home: FC<{ repos: HomeRepo[]; version: string }> = ({
     <div class="wrap">
       <div class="hdr">
         <div class="brand">
-          <span class="logo" />
+          <img class="logo" src={LOGO_PNG_DATA_URL} alt="GitFlare" />
           GitFlare
         </div>
         <div class="ver mono">v{version}</div>

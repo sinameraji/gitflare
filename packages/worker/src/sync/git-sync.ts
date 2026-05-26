@@ -68,7 +68,16 @@ export async function syncGithubToArtifacts(
     }),
   });
 
-  const token = await params.artifactsRepo.createToken("write", 600);
+  const tokenResult = (await params.artifactsRepo.createToken("write", 600)) as {
+    plaintext?: string;
+    token?: string;
+  };
+  const rawToken = tokenResult.plaintext ?? tokenResult.token;
+  if (!rawToken) {
+    throw new Error(
+      `createToken (write) returned unexpected shape: ${JSON.stringify(tokenResult)}`,
+    );
+  }
   await git.push({
     fs,
     http,
@@ -79,7 +88,7 @@ export async function syncGithubToArtifacts(
     force: false,
     onAuth: () => ({
       username: "x",
-      password: tokenSecret(token.token),
+      password: tokenSecret(rawToken),
     }),
   });
 

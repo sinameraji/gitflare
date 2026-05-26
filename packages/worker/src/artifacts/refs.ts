@@ -50,7 +50,7 @@ async function extractToken(result: unknown): Promise<string> {
   //     that needs an extra await; awaiting a string is a no-op so it's safe.
   if (result && typeof result === "object") {
     const obj = result as Record<string, unknown>;
-    for (const k of ["token", "secret", "value", "accessToken"]) {
+    for (const k of ["plaintext", "token", "secret", "value", "accessToken"]) {
       const v = obj[k];
       if (v == null) continue;
       const awaited = await (v as Promise<unknown>);

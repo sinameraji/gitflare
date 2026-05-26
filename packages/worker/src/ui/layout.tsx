@@ -1,4 +1,5 @@
 import type { FC, PropsWithChildren } from "hono/jsx";
+import { LOGO_PNG_DATA_URL } from "./logo-data";
 
 export const Layout: FC<PropsWithChildren<{ title?: string }>> = ({
   title,
@@ -9,7 +10,7 @@ export const Layout: FC<PropsWithChildren<{ title?: string }>> = ({
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width" />
       <title>{title ? `${title} · GitFlare` : "GitFlare"}</title>
-      <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      <link rel="icon" href={LOGO_PNG_DATA_URL} type="image/png" />
       <style dangerouslySetInnerHTML={{ __html: css }} />
     </head>
     <body>{children}</body>
@@ -41,8 +42,8 @@ a:hover { text-decoration: underline; }
 
 .wrap { max-width: 960px; margin: 0 auto; padding: 32px 24px 96px; }
 .hdr { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid var(--border); }
-.hdr .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -0.01em; }
-.hdr .brand .logo { width: 18px; height: 18px; border-radius: 4px; background: var(--accent); display: inline-block; }
+.hdr .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -0.01em; font-size: 15px; }
+.hdr .brand .logo { width: 28px; height: 28px; display: inline-block; }
 .hdr .ver { color: var(--muted); font-size: 12px; }
 
 h1 { font-weight: 600; letter-spacing: -0.02em; font-size: 28px; margin: 32px 0 4px; }

@@ -13,11 +13,6 @@ app.get("/health", (c) =>
   c.json({ ok: true, version: c.env.GITFLARE_VERSION ?? "0.0.0" }),
 );
 
-app.get("/favicon.svg", (c) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#f38020"/><circle cx="12" cy="12" r="3" fill="#fff"/><circle cx="22" cy="16" r="3" fill="#fff"/><circle cx="14" cy="22" r="3" fill="#fff"/><path d="M12 12L17 16L14 22M17 16L22 16" stroke="#fff" stroke-width="2" fill="none"/></svg>`;
-  return c.body(svg, 200, { "Content-Type": "image/svg+xml; charset=utf-8" });
-});
-
 app.get("/", async (c) => {
   const repoMap = parseRepoMap(c.env);
   const repos: HomeRepo[] = [];
