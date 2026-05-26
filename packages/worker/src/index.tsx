@@ -3,7 +3,8 @@ import { verifyGithubSignature } from "./github/webhook";
 import { lookupArtifactsRepoEntry, parseRepoMap, type Env } from "./env";
 import { repoStubFor } from "./durable-objects/repo";
 import { listArtifactsRefs } from "./artifacts/refs";
-import { getRepoContent } from "./artifacts/content";
+import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt } from "./artifacts/content";
+import { Browse } from "./ui/browse";
 import { Home, type HomeRepo } from "./ui/home";
 
 export { RepoDO } from "./durable-objects/repo";
@@ -52,6 +53,75 @@ app.get("/", async (c) => {
     repos.push(r);
   }
   return c.html(<Home repos={repos} version={c.env.GITFLARE_VERSION ?? "0.0.0"} />);
+});
+
+// Look up an artifacts repo name → its REPO_MAP entry + github full_name.
+function findRepoByArtifactsName(env: Env, artifactsName: string):
+  | { githubFullName: string; name: string; remote: string }
+  | undefined {
+  const map = parseRepoMap(env);
+  for (const [github, entry] of Object.entries(map)) {
+    if (entry.name === artifactsName) return { githubFullName: github, ...entry };
+  }
+  return undefined;
+}
+
+app.get("/r/:name/tree/*", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return c.text(`Unknown repo: ${name}`, 404);
+
+  const prefix = `/r/${name}/tree/`;
+  const path = decodeURIComponent(c.req.path.slice(prefix.length)).replace(/^\/+|\/+$/g, "");
+
+  try {
+    const handle = await c.env.ARTIFACTS.get(name);
+    const shallow = await cloneRepoShallow(handle, repo.remote);
+    const entries = await listTreeAt(shallow, path);
+    if (!entries) return c.text(`Path not found: ${path}`, 404);
+    return c.html(
+      <Browse
+        githubFullName={repo.githubFullName}
+        artifactsRepoName={name}
+        branchName={shallow.branchName}
+        headSha={shallow.headSha}
+        path={path}
+        entries={entries}
+        version={c.env.GITFLARE_VERSION ?? "0.0.0"}
+      />,
+    );
+  } catch (err) {
+    return c.text(`Error: ${(err as Error).message}`, 500);
+  }
+});
+
+app.get("/r/:name/blob/*", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return c.text(`Unknown repo: ${name}`, 404);
+
+  const prefix = `/r/${name}/blob/`;
+  const path = decodeURIComponent(c.req.path.slice(prefix.length)).replace(/^\/+|\/+$/g, "");
+
+  try {
+    const handle = await c.env.ARTIFACTS.get(name);
+    const shallow = await cloneRepoShallow(handle, repo.remote);
+    const blob = await readBlobAt(shallow, path);
+    if (!blob) return c.text(`File not found: ${path}`, 404);
+    return c.html(
+      <Browse
+        githubFullName={repo.githubFullName}
+        artifactsRepoName={name}
+        branchName={shallow.branchName}
+        headSha={shallow.headSha}
+        path={path}
+        blob={blob}
+        version={c.env.GITFLARE_VERSION ?? "0.0.0"}
+      />,
+    );
+  } catch (err) {
+    return c.text(`Error: ${(err as Error).message}`, 500);
+  }
 });
 
 app.get("/api/refs", async (c) => {

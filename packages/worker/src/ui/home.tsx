@@ -22,6 +22,24 @@ export interface HomeRepo {
   error?: string;
 }
 
+function rewriteReadmeImages(md: string, githubFullName: string, branch: string): string {
+  const base = `https://raw.githubusercontent.com/${githubFullName}/${branch}`;
+  // ![alt](url) — handle markdown image syntax
+  let out = md.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, alt, url) => {
+    const u = String(url).trim();
+    if (/^(https?|data):/i.test(u)) return m;
+    const norm = u.replace(/^\.\//, "").replace(/^\//, "");
+    return `![${alt}](${base}/${norm})`;
+  });
+  // <img src="..."> — handle raw HTML image tags
+  out = out.replace(/<img\s+([^>]*?)src=["']([^"']+)["']([^>]*)>/gi, (m, pre, url, post) => {
+    if (/^(https?|data):/i.test(url)) return m;
+    const norm = url.replace(/^\.\//, "").replace(/^\//, "");
+    return `<img ${pre}src="${base}/${norm}"${post}>`;
+  });
+  return out;
+}
+
 export const Home: FC<{ repos: HomeRepo[]; version: string }> = ({
   repos,
   version,
@@ -132,36 +150,44 @@ git -c http.extraHeader="Authorization: Bearer $ARTIFACTS_TOKEN" \\
         </details>
       </div>
 
-      {repo.content ? <RepoContentSection content={repo.content} /> : null}
+      {repo.content ? <RepoContentSection repo={repo} content={repo.content} /> : null}
     </>
   );
 };
 
-const RepoContentSection: FC<{ content: NonNullable<HomeRepo["content"]> }> = ({ content }) => (
+const RepoContentSection: FC<{ repo: HomeRepo; content: NonNullable<HomeRepo["content"]> }> = ({
+  repo,
+  content,
+}) => (
   <>
     <h2>Files on {content.defaultBranch}</h2>
-    <div class="card">
-      <div class="muted mono" style="font-size: 12px; margin-bottom: 12px;">
+    <div class="card" style="padding: 0; overflow: hidden;">
+      <div class="muted mono" style="font-size: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border);">
         HEAD {content.headSha.slice(0, 12)} · {content.tree.length} top-level entries · {formatBytes(content.totalBytes)}
       </div>
-      <table class="refs">
+      <table class="refs" style="margin: 0;">
         <thead>
           <tr>
             <th style="width: 60px;">Type</th>
             <th>Name</th>
-            <th style="text-align: right;">Size</th>
+            <th style="text-align: right; width: 100px;">Size</th>
           </tr>
         </thead>
         <tbody>
-          {content.tree.map((e) => (
-            <tr>
-              <td class="mono" style="color: var(--muted);">{e.type === "tree" ? "dir" : "file"}</td>
-              <td class="mono">{e.path}</td>
-              <td class="mono" style="text-align: right; color: var(--muted);">
-                {e.type === "blob" && e.size !== undefined ? formatBytes(e.size) : ""}
-              </td>
-            </tr>
-          ))}
+          {content.tree.map((e) => {
+            const href = e.type === "tree"
+              ? `/r/${repo.artifactsRepoName}/tree/${e.path}`
+              : `/r/${repo.artifactsRepoName}/blob/${e.path}`;
+            return (
+              <tr>
+                <td class="mono" style="color: var(--muted);">{e.type === "tree" ? "dir" : "file"}</td>
+                <td><a class="mono" href={href}>{e.path}{e.type === "tree" ? "/" : ""}</a></td>
+                <td class="mono" style="text-align: right; color: var(--muted);">
+                  {e.type === "blob" && e.size !== undefined ? formatBytes(e.size) : ""}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -171,7 +197,11 @@ const RepoContentSection: FC<{ content: NonNullable<HomeRepo["content"]> }> = ({
         <h2>{content.readme.path}</h2>
         <div class="card readme">
           <div
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(content.readme.text) }}
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdown(
+                rewriteReadmeImages(content.readme.text, repo.githubFullName, content.defaultBranch),
+              ),
+            }}
           />
         </div>
       </>

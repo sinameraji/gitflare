@@ -18,6 +18,21 @@ export interface RepoContent {
   totalBytes: number;
 }
 
+export interface ShallowRepo {
+  fs: MemFs;
+  dir: string;
+  headSha: string;
+  branchName: string;
+}
+
+export interface BlobAtPath {
+  path: string;
+  bytes: Uint8Array;
+  size: number;
+  isBinary: boolean;
+  text?: string;
+}
+
 const README_NAMES = [
   "README.md",
   "Readme.md",
@@ -29,28 +44,23 @@ const README_NAMES = [
 ];
 
 /**
- * Shallow-fetch the default branch tip from Artifacts and return the
- * top-level tree + README content. Designed for one dashboard render —
- * fits in Worker CPU limits for repos up to a few thousand top-level entries.
- *
- * Heavier features (full tree walk, file viewer per blob) should be split
- * into separate routes that fetch only what they need.
+ * Shallow-clone the default branch tip from Artifacts. Used by every
+ * browsing route (home, tree, blob). The clone fetches the full snapshot
+ * at depth=1 — all trees + blobs for that commit — so subsequent
+ * read* calls are local memfs operations.
  */
-export async function getRepoContent(
+export async function cloneRepoShallow(
   repo: ArtifactsRepo,
   remote: string,
-): Promise<RepoContent> {
+): Promise<ShallowRepo> {
   const tokenResult = (await repo.createToken("read", 180)) as {
     plaintext?: string;
     token?: string;
   };
   const rawToken = tokenResult.plaintext ?? tokenResult.token;
-  if (!rawToken) {
-    throw new Error("createToken returned no token");
-  }
+  if (!rawToken) throw new Error("createToken returned no token");
   const password = tokenSecret(rawToken);
 
-  // Discover the default branch via remote ref listing first.
   const refs = await git.listServerRefs({
     http,
     url: remote,
@@ -66,9 +76,6 @@ export async function getRepoContent(
     ? defaultRef.ref.replace(/^refs\/heads\//, "")
     : "main";
 
-  // Shallow clone (depth 1, no checkout) — this gets us the tip commit's
-  // tree + blobs without setting up a working directory or needing to
-  // configure a refspec the way bare git.fetch() does.
   const fs = new MemFs();
   const dir = "/repo";
   await git.clone({
@@ -84,10 +91,103 @@ export async function getRepoContent(
     onAuth: () => ({ username: "x", password }),
   });
 
-  const headSha = head.oid;
-  const commit = await git.readCommit({ fs, dir, oid: headSha });
-  const treeOid = commit.commit.tree;
-  const rootTree = await git.readTree({ fs, dir, oid: treeOid });
+  return { fs, dir, headSha: head.oid, branchName };
+}
+
+/** Walk to a path in the tree and return entries (for directories) or null (for blobs/missing). */
+async function resolveTree(
+  shallow: ShallowRepo,
+  path: string,
+): Promise<{ entries: Array<{ path: string; oid: string; type: string; mode: string }> } | null> {
+  const commit = await git.readCommit({ fs: shallow.fs, dir: shallow.dir, oid: shallow.headSha });
+  let treeOid = commit.commit.tree;
+  const segments = path.split("/").filter(Boolean);
+  for (const seg of segments) {
+    const tree = await git.readTree({ fs: shallow.fs, dir: shallow.dir, oid: treeOid });
+    const next = tree.tree.find((e) => e.path === seg);
+    if (!next || next.type !== "tree") return null;
+    treeOid = next.oid;
+  }
+  const tree = await git.readTree({ fs: shallow.fs, dir: shallow.dir, oid: treeOid });
+  return { entries: tree.tree };
+}
+
+/** List entries at a path. Returns null if the path doesn't exist or is a file. */
+export async function listTreeAt(
+  shallow: ShallowRepo,
+  path: string,
+): Promise<TreeEntry[] | null> {
+  const t = await resolveTree(shallow, path);
+  if (!t) return null;
+  const out: TreeEntry[] = [];
+  for (const e of t.entries) {
+    const isBlob = e.type === "blob";
+    let size: number | undefined;
+    if (isBlob) {
+      try {
+        const blob = await git.readBlob({ fs: shallow.fs, dir: shallow.dir, oid: e.oid });
+        size = blob.blob.byteLength;
+      } catch {
+        // ignore
+      }
+    }
+    out.push({
+      path: e.path,
+      type: isBlob ? "blob" : "tree",
+      ...(size !== undefined ? { size } : {}),
+      oid: e.oid,
+    });
+  }
+  out.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "tree" ? -1 : 1;
+    return a.path.localeCompare(b.path);
+  });
+  return out;
+}
+
+/** Read a single blob at a path. Returns null if path doesn't exist or is a directory. */
+export async function readBlobAt(
+  shallow: ShallowRepo,
+  path: string,
+): Promise<BlobAtPath | null> {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+  const parent = segments.slice(0, -1).join("/");
+  const leaf = segments[segments.length - 1]!;
+  const parentTree = await resolveTree(shallow, parent);
+  if (!parentTree) return null;
+  const entry = parentTree.entries.find((e) => e.path === leaf);
+  if (!entry || entry.type !== "blob") return null;
+  const blob = await git.readBlob({ fs: shallow.fs, dir: shallow.dir, oid: entry.oid });
+  const bytes = blob.blob;
+  const isBinary = looksBinary(bytes);
+  return {
+    path: segments.join("/"),
+    bytes,
+    size: bytes.byteLength,
+    isBinary,
+    ...(isBinary ? {} : { text: new TextDecoder().decode(bytes) }),
+  };
+}
+
+function looksBinary(bytes: Uint8Array): boolean {
+  const sample = bytes.subarray(0, Math.min(8000, bytes.byteLength));
+  for (const b of sample) {
+    if (b === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Top-level tree + README. Convenience wrapper for the home dashboard.
+ */
+export async function getRepoContent(
+  repo: ArtifactsRepo,
+  remote: string,
+): Promise<RepoContent> {
+  const shallow = await cloneRepoShallow(repo, remote);
+  const commit = await git.readCommit({ fs: shallow.fs, dir: shallow.dir, oid: shallow.headSha });
+  const rootTree = await git.readTree({ fs: shallow.fs, dir: shallow.dir, oid: commit.commit.tree });
 
   const tree: TreeEntry[] = [];
   let readme: RepoContent["readme"];
@@ -98,7 +198,7 @@ export async function getRepoContent(
     let size: number | undefined;
     if (isBlob) {
       try {
-        const blob = await git.readBlob({ fs, dir, oid: entry.oid });
+        const blob = await git.readBlob({ fs: shallow.fs, dir: shallow.dir, oid: entry.oid });
         size = blob.blob.byteLength;
         totalBytes += size;
         if (!readme && README_NAMES.includes(entry.path)) {
@@ -125,8 +225,8 @@ export async function getRepoContent(
   });
 
   return {
-    defaultBranch: branchName,
-    headSha,
+    defaultBranch: shallow.branchName,
+    headSha: shallow.headSha,
     tree,
     totalBytes,
     ...(readme ? { readme } : {}),
