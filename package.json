@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "GitHub-shaped developer experience on Cloudflare primitives",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "packageManager": "pnpm@9.0.0",
   "engines": {
     "node": ">=20"

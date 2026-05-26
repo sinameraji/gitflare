@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "type": "module",
   "description": "CLI for GitFlare — install, admin, escape hatches",
-  "license": "SEE LICENSE IN ../../LICENSE",
+  "license": "MIT",
   "bin": {
     "gitflare": "./dist/index.js"
   },

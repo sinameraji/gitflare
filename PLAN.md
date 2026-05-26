@@ -345,7 +345,7 @@ From the Cloudflare docs and the launch blog:
 
 1. **Domain.** Working assumption: `gitflare.dev` for the marketing + onboarding surface. Per-user instances live at `<repo>.<account>.gitflare.dev` (or a custom domain the user brings). Confirm availability and budget.
 2. **Pricing model.** BYO-keys means we don't pay infra. We charge for: hosted coordinator, mirror-sync orchestration, the social-layer database. Per-seat? Per-repo? Flat? Leaning per-seat for hosted, free for self-host.
-3. **License.** Almost certainly source-available + free for self-host, paid for hosted. The exact license needs lawyer input. AGPL? FSL? BSL with conversion?
+3. ~~**License.**~~ Resolved: **MIT**. Maximum-permissive for early growth; if a hosted commercial offering ever needs a different stance for that specific layer, it can be relicensed at that layer without affecting the OSS core.
 4. **What "issues mirror" actually shows in v0.1.** Re-render from D1 (highest fidelity, most work), embed GitHub's UI in an iframe (lowest fidelity, fastest), or re-render read-only with link-out for actions (the middle path, currently leaning here).
 5. **Artifacts pricing in GA.** The one primitive in our stack without published pricing. Worth getting an early signal from the Artifacts team given our direct access.
 6. **Token-persistence policy.** §11 commits to "Cloudflare token never persists on gitflare servers" — we should formalize this as a written policy and have it reviewed before launch, since it constrains how the hosted coordinator (v0.4+) can be architected.
@@ -470,21 +470,18 @@ The v0.1 scope list:
 
 | Scope | Why |
 |---|---|
-| Account → Workers Scripts: Edit | Deploy the Worker that serves your UI + git endpoints |
-| Account → Workers Routes: Edit | Configure the subdomain |
-| Account → Durable Objects: Edit | Required by Artifacts |
-| Account → D1: Edit | Store issues, PRs, metadata |
-| Account → R2: Edit | Blob storage (attachments, LFS) |
-| Account → Artifacts: Read | Read repos, list, get tokens |
-| Account → Artifacts: Edit | Create + manage repos, import from upstream, mint tokens |
-| Account → Cloudflare Pages: Edit | Host the web UI |
-| Account → Account Settings: Read | Resolve account ID and subdomain |
+| Account → Workers Scripts: Edit | Deploy the Worker (includes Durable Objects management) |
+| Account → Artifacts: Edit | Create + manage repos, import from upstream, mint tokens. Read is granted implicitly. |
+| Account → Account Settings: Read | Resolve account ID and workers.dev subdomain |
 
-**Eight scopes. Every one named. No "Edit all of Cloudflare" hand-grenade tokens.** Each later version adds scopes; never replaces:
-- v0.2 adds: `Workers Secrets: Edit`
-- v0.3 adds: `Workers AI: Edit` (optional), Sandbox-related scopes when those stabilize
+That's it for v0.1 — three permissions. *Workers Routes* is a Zone-level permission and isn't needed unless the user brings a custom domain. R2/D1/KV are not used in v0.1; they appear below as later versions add them.
+
+**Three scopes for v0.1. Every one named. No "Edit all of Cloudflare" hand-grenade tokens.** Each later version adds scopes; never replaces:
+- v0.2 adds: `Workers KV Storage: Edit` (for cached deploy state)
+- v0.3 adds: Sandbox-related scopes when those stabilize; `R2: Edit` (specifically *Workers R2 Storage*, for build cache); `D1: Edit` (for CI run history)
 - v0.4 adds: `Cloudflare Access: Apps and Policies: Edit`
 - v0.5 adds: `Cloudflare One Connector: Edit`, `Cloudflare Tunnel: Edit`
+- Custom domains (any version): `Zone → Workers Routes: Edit`, `Zone → DNS: Edit`
 
 When the user upgrades versions, we show a diff of the new scopes vs. the existing token and walk them through re-issuing.
 

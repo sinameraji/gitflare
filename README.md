@@ -62,4 +62,4 @@ gitflare/
 
 ## License
 
-License is not yet decided. Working assumption: source-available + free for self-host, paid for hosted (FSL-style). Until finalized, treat this repo as **all rights reserved** by the authors. See [LICENSE](./LICENSE).
+[MIT](./LICENSE) © 2026 Sina Meraji and GitFlare contributors.

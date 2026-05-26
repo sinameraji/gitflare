@@ -1,19 +1,21 @@
-GitFlare — License (provisional)
+MIT License
 
-Copyright (c) 2026 GitFlare contributors
+Copyright (c) 2026 Sina Meraji and GitFlare contributors
 
-This project's license is not yet finalized. The working intent is a
-source-available license with eventual conversion to an OSI-approved
-license (FSL-1.1-Apache-2.0 or similar), permitting:
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-  * unrestricted self-hosting for personal and internal-business use
-  * forking and modification for those purposes
-  * contributions back to this repository
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-and restricting:
-
-  * offering GitFlare as a hosted commercial service to third parties
-
-Until a final license file replaces this placeholder, all rights are
-reserved. Open an issue if you want to use this code in a way the
-working intent doesn't cover and we'll figure it out.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

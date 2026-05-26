@@ -44,19 +44,7 @@ export class CloudflareClient {
   }
 
   // --- Artifacts ---
-
-  async ensureNamespace(accountId: string, name: string): Promise<void> {
-    try {
-      await this.req("POST", `/accounts/${accountId}/artifacts/namespaces`, {
-        name,
-      });
-    } catch (err) {
-      // If it already exists, the API returns an error — that's fine.
-      const msg = (err as Error).message;
-      if (/already exists|already taken|duplicate/i.test(msg)) return;
-      throw err;
-    }
-  }
+  // Namespaces are auto-provisioned on first repo creation; no ensure step.
 
   async importRepo(
     accountId: string,

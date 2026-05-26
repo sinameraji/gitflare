@@ -20,8 +20,7 @@ export interface InitOptions {
   session?: string;
 }
 
-const TOKEN_TEMPLATE_URL =
-  "https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_kv_storage%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_r2_storage%22%2C%22type%22%3A%22edit%22%7D%5D&name=GitFlare";
+const TOKEN_URL = "https://dash.cloudflare.com/profile/api-tokens";
 
 const GITHUB_PAT_URL =
   "https://github.com/settings/tokens/new?scopes=repo,admin:repo_hook&description=GitFlare";
@@ -73,7 +72,15 @@ export async function runInit(
   }
 
   // ---------- 3. Cloudflare token ----------
-  p.log.info(`Create a scoped Cloudflare API token (Workers Scripts/Edit, D1/Edit, R2/Edit, Artifacts/Edit, Artifacts/Read, Workers Routes/Edit, Account Settings/Read):\n  ${kleur.gray(TOKEN_TEMPLATE_URL)}`);
+  p.log.info(
+    [
+      `Create a Cloudflare API token at ${kleur.gray(TOKEN_URL)}`,
+      `with these ${kleur.bold("3 account-level permissions")}:`,
+      `  • ${kleur.cyan("Workers Scripts")}        — Edit`,
+      `  • ${kleur.cyan("Artifacts")}              — Edit  ${kleur.gray("(adds Read implicitly)")}`,
+      `  • ${kleur.cyan("Account Settings")}       — Read`,
+    ].join("\n"),
+  );
   const cfToken = await p.password({
     message: "Cloudflare API token",
     validate: (s) => (!s ? "required" : undefined),
@@ -133,12 +140,11 @@ export async function runInit(
   const proceed = await p.confirm({ message: "Proceed?", initialValue: true });
   if (p.isCancel(proceed) || !proceed) return p.cancel("Cancelled."), undefined;
 
-  // ---------- 5. Artifacts namespace + import ----------
+  // ---------- 5. Import into Artifacts ----------
+  // Namespaces auto-provision on first repo creation — no explicit ensure step.
   const provSpin = p.spinner();
-  provSpin.start("Ensuring Artifacts namespace");
+  provSpin.start("Importing repo into Artifacts (one-time seed from GitHub)");
   try {
-    await cf.ensureNamespace(accountId, namespace);
-    provSpin.message("Importing repo into Artifacts (one-time seed)");
     const imported = await cf.importRepo(accountId, namespace, {
       name: artifactsRepoName,
       url: ghRepo.clone_url,
@@ -146,7 +152,7 @@ export async function runInit(
     });
     provSpin.stop(`Artifacts repo created: ${kleur.cyan(imported.name)} — ${kleur.gray(imported.remote)}`);
   } catch (e) {
-    provSpin.stop("Artifacts provisioning failed");
+    provSpin.stop("Artifacts import failed");
     p.log.error((e as Error).message);
     return;
   }

@@ -26,20 +26,20 @@ pnpm --filter gitflare build
 
 **Cloudflare API token** (https://dash.cloudflare.com/profile/api-tokens):
 
-Create a custom token with these permissions:
+Click **Create Custom Token** and add these **3 account-level permissions** (this is the minimum for v0.1; later versions will request more as features are added):
 
 | Section | Permission | Access |
 |---|---|---|
 | Account | Workers Scripts | Edit |
-| Account | Workers Routes | Edit |
-| Account | Workers KV Storage | Edit |
-| Account | Workers R2 Storage | Edit |
-| Account | D1 | Edit |
-| Account | Artifacts | Read |
 | Account | Artifacts | Edit |
 | Account | Account Settings | Read |
 
-Account Resources: include your account.
+Account Resources: **Include → your account**.
+
+Notes:
+- "Workers Routes" is a *Zone* permission and isn't needed unless you bring your own domain.
+- R2/D1/Workers KV aren't used in v0.1 — they appear in [PLAN.md §11](./PLAN.md#11-auth-and-onboarding) for later versions.
+- Artifacts: Edit grants Read implicitly.
 
 ## 3. Run `gitflare init`
 
