@@ -11,10 +11,22 @@ This walks you through provisioning a GitFlare mirror for one of your GitHub rep
 
 ## 1. Run the CLI
 
-No install needed:
+Install once:
 
 ```bash
-npx gitflare init github.com/<owner>/<repo>
+npm i -g gitflare
+```
+
+Then, from inside any GitHub repo:
+
+```bash
+gitflare init        # autodetects the GitHub remote from this directory
+```
+
+Or pass a repo explicitly from anywhere:
+
+```bash
+gitflare init github.com/<owner>/<repo>
 ```
 
 The CLI will then ask for two tokens. Skip ahead to step 3 — section 2 below is just the token-creation reference.

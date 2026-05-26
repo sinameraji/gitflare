@@ -27,8 +27,22 @@ When GitHub goes down, your reads, your clones, and (in later versions) your CI/
 
 ## Try it
 
+Install once:
+
 ```bash
-npx gitflare init github.com/<owner>/<repo>
+npm i -g gitflare
+```
+
+Then, from inside any GitHub repo on your machine:
+
+```bash
+gitflare init        # autodetects the GitHub remote from the current directory
+```
+
+Or pass a repo explicitly:
+
+```bash
+gitflare init github.com/<owner>/<repo>
 ```
 
 That's it. The CLI walks you through a GitHub PAT + a scoped Cloudflare API token, then provisions an Artifacts repo, a Worker, and a GitHub webhook — all on your own Cloudflare account. Detailed walkthrough: [QUICKSTART.md](./QUICKSTART.md).

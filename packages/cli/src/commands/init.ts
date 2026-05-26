@@ -5,6 +5,7 @@ import { CloudflareClient } from "../cloudflare.js";
 import { loadConfig, saveConfig } from "../config.js";
 import {
   artifactsRepoNameFor,
+  detectGithubRemoteFromCwd,
   orange,
   parseGithubUrl,
   randomHex,
@@ -31,14 +32,24 @@ export async function runInit(
   }
 
   // ---------- 1. Repo URL ----------
-  if (!githubUrl) {
-    const v = await p.text({
-      message: "GitHub repo to mirror",
-      placeholder: "github.com/owner/repo",
-      validate: (s) => (!s ? "required" : undefined),
-    });
-    if (p.isCancel(v)) return p.cancel("Cancelled."), undefined;
-    githubUrl = v as string;
+  // No arg, or '.', means "detect from current directory's git remote."
+  if (!githubUrl || githubUrl === ".") {
+    const detected = detectGithubRemoteFromCwd();
+    if (detected) {
+      p.log.info(`Detected GitHub remote in ${kleur.gray(process.cwd())}: ${kleur.cyan(detected)}`);
+      githubUrl = detected;
+    } else {
+      if (githubUrl === ".") {
+        p.log.warn("No GitHub origin remote found in this directory. Asking instead.");
+      }
+      const v = await p.text({
+        message: "GitHub repo to mirror",
+        placeholder: "github.com/owner/repo",
+        validate: (s) => (!s ? "required" : undefined),
+      });
+      if (p.isCancel(v)) return p.cancel("Cancelled."), undefined;
+      githubUrl = v as string;
+    }
   }
   const { owner, repo } = parseGithubUrl(githubUrl);
   p.log.info(`Repo: ${kleur.cyan(`${owner}/${repo}`)}`);

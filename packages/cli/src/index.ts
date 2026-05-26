@@ -13,7 +13,7 @@ program
 program
   .command("init")
   .description("Provision GitFlare for a GitHub repo on your Cloudflare account")
-  .argument("[github-url]", "GitHub repo URL (e.g. github.com/owner/repo)")
+  .argument("[github-url]", "GitHub repo URL (e.g. github.com/owner/repo). Omit or pass '.' to autodetect from the current directory's git remote.")
   .option("--session <token>", "Session blob from gitflare.dev onboarding")
   .action(runInit);
 

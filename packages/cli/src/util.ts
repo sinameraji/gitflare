@@ -1,5 +1,28 @@
+import { spawnSync } from "node:child_process";
+
 export const orange = (s: string): string =>
   `\x1b[38;2;243;128;32m${s}\x1b[0m`;
+
+/**
+ * Read the `origin` remote of the git repo at cwd. Returns undefined if the
+ * directory isn't a git repo, has no origin, or origin doesn't point at GitHub.
+ */
+export function detectGithubRemoteFromCwd(cwd: string = process.cwd()): string | undefined {
+  try {
+    const res = spawnSync("git", ["config", "--get", "remote.origin.url"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (res.status !== 0) return undefined;
+    const url = res.stdout.trim();
+    if (!url) return undefined;
+    if (!/github\.com/i.test(url)) return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
 
 export function parseGithubUrl(input: string): { owner: string; repo: string } {
   // Accepts: github.com/owner/repo, https://github.com/owner/repo, owner/repo, git@github.com:owner/repo.git
