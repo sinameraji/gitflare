@@ -1,6 +1,6 @@
 # gitflare
 
-> GitHub stays your source of truth. GitFlare is the faster, always-up mirror on your own Cloudflare account.
+> **A backup plan for your GitHub repos.** Self-host a live mirror on your own Cloudflare account. One command, private by default, open source. Nothing routes through anyone else.
 
 One command mirrors any GitHub repo onto your own Cloudflare account using [Artifacts](https://developers.cloudflare.com/artifacts/) for git storage, a [Cloudflare Worker](https://developers.cloudflare.com/workers/) for the dashboard + webhook sync, and a per-repo [Durable Object](https://developers.cloudflare.com/durable-objects/) for state. **GitFlare never sees your code, your token, or your traffic** — there's no server in the loop. It's an MIT-licensed CLI; everything it provisions runs on infrastructure you own.
 

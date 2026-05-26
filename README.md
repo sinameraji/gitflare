@@ -5,7 +5,11 @@
 <h1 align="center">GitFlare</h1>
 
 <p align="center">
-  <em>GitHub stays your source of truth. GitFlare is the faster, always-up mirror on your own Cloudflare account.</em>
+  <strong>A backup plan for your GitHub repos.</strong>
+</p>
+
+<p align="center">
+  Self-host a live mirror on your own Cloudflare account. One command, private by default, open source. Nothing routes through anyone else.
 </p>
 
 ---
