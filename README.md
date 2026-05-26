@@ -25,11 +25,20 @@ GitFlare is a GitHub-shaped developer experience built on Cloudflare primitives 
 
 When GitHub goes down, your reads, your clones, and (in later versions) your CI/CD keep working. When GitHub is up, you don't notice GitFlare is running.
 
+## Try it
+
+```bash
+npx gitflare init github.com/<owner>/<repo>
+```
+
+That's it. The CLI walks you through a GitHub PAT + a scoped Cloudflare API token, then provisions an Artifacts repo, a Worker, and a GitHub webhook — all on your own Cloudflare account. Detailed walkthrough: [QUICKSTART.md](./QUICKSTART.md).
+
+[![npm](https://img.shields.io/npm/v/gitflare?color=f38020&style=flat-square)](https://www.npmjs.com/package/gitflare)
+
 ## Status
 
-Early development — v0.1 end-to-end cut landed (M0–M4). One command provisions a GitFlare instance into your Cloudflare account; GitHub webhooks drive incremental sync into Artifacts.
+Pre-alpha. v0.1 (read-replica cut, M0–M4) is live on npm. CI/CD, team collaboration, and cross-tenant federation via Cloudflare Mesh are on the roadmap.
 
-- **Try it:** [QUICKSTART.md](./QUICKSTART.md)
 - **Roadmap and design:** [PLAN.md](./PLAN.md)
 - **Live milestone status:** [PLAN.md §12](./PLAN.md#12-milestones-and-development-log)
 

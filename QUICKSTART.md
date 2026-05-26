@@ -1,22 +1,25 @@
 # GitFlare quickstart (end-to-end)
 
-This walks you through provisioning a GitFlare mirror for one of your GitHub repos onto your own Cloudflare account. Tested against v0.1 (M0–M4).
+This walks you through provisioning a GitFlare mirror for one of your GitHub repos onto your own Cloudflare account. Tested against v0.1.
 
 ## Prereqs
 
-- Node ≥ 20 and pnpm
+- Node ≥ 20
 - A Cloudflare account with **Artifacts beta access**
 - A GitHub repo you can install webhooks on
 - A clean workstation — no need to be logged in to wrangler in advance
 
-## 1. Clone + install
+## 1. Run the CLI
+
+No install needed:
 
 ```bash
-git clone <this-repo>
-cd gitflare
-pnpm install
-pnpm --filter gitflare build
+npx gitflare init github.com/<owner>/<repo>
 ```
+
+The CLI will then ask for two tokens. Skip ahead to step 3 — section 2 below is just the token-creation reference.
+
+> **From source** (only if you're hacking on GitFlare itself): `git clone https://github.com/sinameraji/gitflare && cd gitflare && pnpm install && pnpm --filter gitflare build && node packages/cli/dist/index.js init github.com/<owner>/<repo>`
 
 ## 2. Create the two tokens
 
@@ -41,13 +44,9 @@ Notes:
 - R2/D1/Workers KV aren't used in v0.1 — they appear in [PLAN.md §11](./PLAN.md#11-auth-and-onboarding) for later versions.
 - Artifacts: Edit grants Read implicitly.
 
-## 3. Run `gitflare init`
+## 3. Walk through `gitflare init`
 
-```bash
-node packages/cli/dist/index.js init github.com/<owner>/<repo>
-```
-
-The CLI will:
+When you run `npx gitflare init github.com/<owner>/<repo>`, the CLI will:
 
 1. Verify your GitHub token (shows your username + the repo's default branch).
 2. Verify your Cloudflare token, list accounts, resolve your workers.dev subdomain.
@@ -96,7 +95,7 @@ git -c http.extraHeader="Authorization: Bearer $ARTIFACTS_TOKEN" \
 ## Status check
 
 ```bash
-node packages/cli/dist/index.js status
+npx gitflare status
 ```
 
 Lists all repos you've provisioned and where their Workers live.
