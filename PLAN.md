@@ -247,7 +247,7 @@ Scope is mostly UX polish + a discovery surface. Not architecturally novel after
 
 ### v1.0 — Production-ready, paid tiers
 
-The point at which we'd stop calling this beta. Real SLAs, billing, support, multi-region disaster recovery (Artifacts already replicates; this is about the metadata layers we own). The roadmap here depends entirely on what we learn from v0.1–v0.6 so leaving it as a placeholder.
+The point at which we'd stop calling this beta. Hardening, polish, multi-region durability for the metadata layers we own (Artifacts already replicates itself). GitFlare stays fully open source — no hosted product, no paid tier; every user runs it on their own Cloudflare account. The roadmap here depends entirely on what we learn from v0.1–v0.6 so leaving it as a placeholder.
 
 ---
 
@@ -345,7 +345,7 @@ From the Cloudflare docs and the launch blog:
 
 1. **Domain.** Working assumption: `gitflare.dev` for the marketing + onboarding surface. Per-user instances live at `<repo>.<account>.gitflare.dev` (or a custom domain the user brings). Confirm availability and budget.
 2. **Pricing model.** BYO-keys means we don't pay infra. We charge for: hosted coordinator, mirror-sync orchestration, the social-layer database. Per-seat? Per-repo? Flat? Leaning per-seat for hosted, free for self-host.
-3. ~~**License.**~~ Resolved: **MIT**. Maximum-permissive for early growth; if a hosted commercial offering ever needs a different stance for that specific layer, it can be relicensed at that layer without affecting the OSS core.
+3. ~~**License.**~~ Resolved: **MIT**. GitFlare is and stays fully open source — no plans for a hosted commercial offering or relicensing. Everyone runs it on their own Cloudflare account, on the same terms.
 4. **What "issues mirror" actually shows in v0.1.** Re-render from D1 (highest fidelity, most work), embed GitHub's UI in an iframe (lowest fidelity, fastest), or re-render read-only with link-out for actions (the middle path, currently leaning here).
 5. **Artifacts pricing in GA.** The one primitive in our stack without published pricing. Worth getting an early signal from the Artifacts team given our direct access.
 6. **Token-persistence policy.** §11 commits to "Cloudflare token never persists on gitflare servers" — we should formalize this as a written policy and have it reviewed before launch, since it constrains how the hosted coordinator (v0.4+) can be architected.
@@ -531,7 +531,7 @@ All three terminate at: a working gitflare on the user's account.
 | v0.1–v0.3 | Nothing. Token never persisted. | Everything: code, issues, runners, secrets. |
 | v0.4 (single-tenant teams) | Same — still zero. | Same. Team identities are managed via Cloudflare Access in the user's account. |
 | v0.5 (cross-tenant) | Coordination metadata only: PR threads spanning accounts, identity directory. Never repo contents. | Repo contents, runners, secrets, ACLs, Mesh policies. |
-| Hosted offering (post v0.4, optional) | Whatever the hosted-coordinator user opts into. Self-host stays fully sovereign. | Same. |
+| v0.5+ coordinator (community-run only) | Only cross-tenant metadata (PR threads, identity bindings) for those who opt in; never repo contents. | Same. |
 
 This is the privacy guarantee, stated in operational terms. It is non-negotiable through v0.5.
 

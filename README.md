@@ -22,7 +22,7 @@ GitFlare ships in versions. Each one stands alone — if the next one never gets
 | v0.4 | 📋 planned | **Multi-user teams.** PRs, reviews, comments — native to GitFlare, bidirectionally mirrored to GitHub. Stacked diffs. "Open PR in sandbox" one-click ephemeral env. |
 | v0.5 | 📋 planned | **Cross-tenant collaboration via Cloudflare Mesh.** Alice and Bob on separate Cloudflare accounts; private repos served Mesh-only with per-identity policies instead of SSH keys. |
 | v0.6 | 📋 planned | **Public repos + discovery.** A real code browser for the public web, search, forks across accounts. |
-| v1.0 | 📋 someday | **Production-ready.** Real SLAs, billing for the hosted coordinator, multi-region DR. |
+| v1.0 | 📋 someday | **Production-ready, fully open source.** Hardening, polish, multi-region durability. No hosted product, no paid tier — GitFlare stays an MIT CLI you run on your own account. |
 
 ## Try it
 
