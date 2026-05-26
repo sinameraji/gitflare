@@ -3,8 +3,20 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Bindings are provisioned by `gitflare init` against the user's account.
+# Most bindings are provisioned by `gitflare init` against the user's account.
 # This file is a template; the CLI rewrites it with the user's actual IDs.
+
+[[artifacts]]
+binding = "ARTIFACTS"
+namespace = "gitflare"
+
+[[durable_objects.bindings]]
+name = "REPO"
+class_name = "RepoDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RepoDO"]
 
 # [[d1_databases]]
 # binding = "DB"
@@ -15,18 +27,12 @@ compatibility_flags = ["nodejs_compat"]
 # binding = "BLOBS"
 # bucket_name = "<provisioned-by-cli>"
 
-# [[durable_objects.bindings]]
-# name = "REPO"
-# class_name = "RepoDO"
-
-# [[migrations]]
-# tag = "v1"
-# new_classes = ["RepoDO"]
-
 [vars]
 GITFLARE_VERSION = "0.0.0"
+# Per-deploy mapping of "github-owner/repo" → "artifacts-repo-name".
+# The CLI writes this on provisioning. JSON-encoded string.
+REPO_MAP = "{}"
 
 # Secrets (set with `wrangler secret put` or written by the CLI):
-#   GITHUB_WEBHOOK_SECRET — for HMAC verification
-#   GITHUB_TOKEN         — for API calls back to GitHub
-#   ARTIFACTS_TOKEN      — for Artifacts API
+#   GITHUB_WEBHOOK_SECRET — for HMAC verification on incoming webhooks
+#   GITHUB_TOKEN          — for API calls back to GitHub (incremental fetch)

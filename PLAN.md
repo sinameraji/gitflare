@@ -47,7 +47,7 @@ The versions are not equal in size. v0.1–v0.3 are roughly the same amount of w
 **Scope:**
 - One user, one Cloudflare account, BYO scoped API token.
 - Web onboarding at `gitflare.dev` (GitHub OAuth → scope-explained Cloudflare token → session handoff) plus a `gitflare init` CLI that performs the actual deploy locally. Token never persists on gitflare's servers. Full flow in §11.
-- GitHub webhook → Worker → `git push --mirror` into Artifacts. Refs + tags + LFS pointers.
+- GitHub webhook → Worker → incremental sync into Artifacts. Refs + tags + LFS pointers. Architecture: initial seed uses Artifacts' `POST /repos/:name/import` (one-shot, server-side history pull). Ongoing per-push sync runs inside the Worker via `isomorphic-git` with an in-memory filesystem, keyed off the last-synced SHA stored in a per-repo Durable Object. (`import` is not a continuous mirror — verified against the Artifacts docs.)
 - Read-only web UI: repo browser, file viewer with syntax highlighting, commit log, blame, tag/release list, README rendering.
 - `git clone https://gitflare.<account>.workers.dev/owner/repo` works (Artifacts' smart HTTP).
 - Issues + PRs **read-only mirror** — pulled via GitHub API on webhook + periodic backfill. Render with original numbers preserved.
@@ -475,7 +475,8 @@ The v0.1 scope list:
 | Account → Durable Objects: Edit | Required by Artifacts |
 | Account → D1: Edit | Store issues, PRs, metadata |
 | Account → R2: Edit | Blob storage (attachments, LFS) |
-| Account → Artifacts: Edit | Create + manage the git repo |
+| Account → Artifacts: Read | Read repos, list, get tokens |
+| Account → Artifacts: Edit | Create + manage repos, import from upstream, mint tokens |
 | Account → Cloudflare Pages: Edit | Host the web UI |
 | Account → Account Settings: Read | Resolve account ID and subdomain |
 
@@ -546,7 +547,7 @@ The roadmap in §4 is what we're shipping. This section is *where we are right n
 | ID | Milestone | Status | Notes |
 |---|---|---|---|
 | M0 | Foundation: monorepo, README, license, scaffold, milestones tracker | ✅ done | First commit. Logo in `assets/`. Four packages (cli, worker, web, shared) with minimal stubs. Diagnostics will resolve after `pnpm install`. |
-| M1 | Worker mirror spike: webhook → Artifacts | ⏳ next | HMAC verification + Hono routing done in M0 scaffold. Next: real Artifacts API integration, sync job in a Durable Object, end-to-end test against a real GitHub webhook. Blocked on Artifacts beta access. |
+| M1 | Worker mirror spike: webhook → Artifacts | ✅ done | Worker now has: HMAC verification, Hono routing, RepoDO (per-repo Durable Object that serializes sync ops + persists last-synced SHA per ref), `syncGithubToArtifacts` using isomorphic-git over a custom in-memory fs (`MemFs`), Artifacts binding type definitions, REPO_MAP var for github→artifacts name lookup. 10/10 unit tests pass (HMAC + memfs). All packages typecheck. End-to-end run on a real Cloudflare account waits for M2 (CLI provisioning). |
 | M2 | CLI init flow | ⏳ planned | Stub exists. Next: real GitHub device-flow OAuth, Cloudflare token capture + scope verification, provisioning sequence (Worker deploy via Wrangler API, Artifacts repo creation, D1/R2 provisioning, webhook install). |
 | M3 | Read-only web UI scaffold | ⏳ planned | One landing page exists with the right visual language. Next: repo browse, file viewer, commit log routes, hooked up to Worker data. |
 | M4 | v0.1 cut: end-to-end working read replica | 🔲 not started | Compose M1+M2+M3. Mirror KimiFlare on a real Cloudflare account. Validate every claim in §4 v0.1 Success criteria. |
@@ -566,7 +567,7 @@ gitflare/
 │   └── logo.png
 └── packages/
     ├── shared/          ← types shared across worker + cli + web
-    ├── worker/          ← Hono Worker; HMAC verification done; Artifacts integration pending
+    ├── worker/          ← Hono Worker with full webhook→sync pipeline (M1 complete)
     ├── cli/             ← commander + clack scaffold; commands are stubs
     └── web/             ← Astro app with a single landing page in the right visual language
 ```

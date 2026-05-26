@@ -5,11 +5,13 @@ export interface InitOptions {
   session?: string;
 }
 
+const orange = (s: string): string => `\x1b[38;2;243;128;32m${s}\x1b[0m`;
+
 export async function runInit(
   githubUrl: string | undefined,
   opts: InitOptions,
 ): Promise<void> {
-  p.intro(kleur.bold().hex("#F38020")("GitFlare init"));
+  p.intro(kleur.bold(orange("GitFlare init")));
 
   if (opts.session) {
     p.log.info("Session-based init not implemented yet (M2). Stub only.");
