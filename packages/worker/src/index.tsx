@@ -3,6 +3,7 @@ import { verifyGithubSignature } from "./github/webhook";
 import { lookupArtifactsRepoEntry, parseRepoMap, type Env } from "./env";
 import { repoStubFor } from "./durable-objects/repo";
 import { listArtifactsRefs } from "./artifacts/refs";
+import { getRepoContent } from "./artifacts/content";
 import { Home, type HomeRepo } from "./ui/home";
 
 export { RepoDO } from "./durable-objects/repo";
@@ -24,10 +25,16 @@ app.get("/", async (c) => {
       branches: [],
       syncedRefs: [],
     };
-    // Live ref listing from the Artifacts repo (smart HTTP protocol).
+    // Live state from Artifacts: refs + content (README + top-level tree).
     try {
       const repoHandle = await c.env.ARTIFACTS.get(entry.name);
       r.branches = await listArtifactsRefs(repoHandle, entry.remote);
+      try {
+        r.content = await getRepoContent(repoHandle, entry.remote);
+      } catch (err) {
+        // Soft fail on content — refs still show.
+        r.error = `Content fetch failed: ${(err as Error).message}`;
+      }
     } catch (err) {
       r.error = `Artifacts ref list failed: ${(err as Error).message}`;
     }

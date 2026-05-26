@@ -69,4 +69,23 @@ p.muted { color: var(--muted); margin: 0; }
 .empty { padding: 32px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; }
 
 footer { color: var(--muted); font-size: 12px; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 48px; }
+
+.readme { line-height: 1.65; }
+.readme h1, .readme h2, .readme h3 { margin-top: 24px; margin-bottom: 8px; font-weight: 600; letter-spacing: -0.01em; }
+.readme h1 { font-size: 22px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.readme h2 { font-size: 18px; padding-bottom: 6px; border-bottom: 1px solid var(--border); color: var(--fg); text-transform: none; letter-spacing: -0.01em; }
+.readme h3 { font-size: 15px; }
+.readme p { margin: 12px 0; }
+.readme a { color: var(--accent); }
+.readme code { background: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+.readme pre { background: var(--bg); padding: 12px; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; }
+.readme pre code { background: none; padding: 0; font-size: 12px; }
+.readme ul, .readme ol { padding-left: 24px; margin: 12px 0; }
+.readme li { margin: 4px 0; }
+.readme blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin: 12px 0; }
+.readme table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+.readme th, .readme td { padding: 6px 12px; border: 1px solid var(--border); text-align: left; }
+.readme th { background: var(--bg); color: var(--muted); font-weight: 500; }
+.readme img { max-width: 100%; }
+.readme hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
 `;

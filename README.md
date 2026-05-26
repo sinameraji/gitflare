@@ -7,31 +7,12 @@
 <p align="center">
   <a href="https://github.com/sinameraji/gitflare/blob/main/LICENSE"><img src="https://img.shields.io/github/license/sinameraji/gitflare?color=f38020&style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/sinameraji/gitflare/stargazers"><img src="https://img.shields.io/github/stars/sinameraji/gitflare?color=f38020&style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/sinameraji/gitflare/network/members"><img src="https://img.shields.io/github/forks/sinameraji/gitflare?color=f38020&style=flat-square" alt="Forks"></a>
-  <a href="https://github.com/sinameraji/gitflare/issues"><img src="https://img.shields.io/github/issues/sinameraji/gitflare?color=f38020&style=flat-square" alt="Issues"></a>
-  <a href="https://github.com/sinameraji/gitflare/pulls"><img src="https://img.shields.io/github/issues-pr/sinameraji/gitflare?color=f38020&style=flat-square" alt="PRs"></a>
   <img src="https://img.shields.io/github/last-commit/sinameraji/gitflare?color=f38020&style=flat-square" alt="Last commit">
-  <img src="https://img.shields.io/github/commit-activity/w/sinameraji/gitflare?color=f38020&style=flat-square" alt="Commit activity">
-  <img src="https://img.shields.io/github/repo-size/sinameraji/gitflare?color=f38020&style=flat-square" alt="Repo size">
-  <br>
   <img src="https://img.shields.io/badge/built_on-Cloudflare-f38020?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare">
   <img src="https://img.shields.io/badge/Artifacts-beta-f38020?style=flat-square" alt="Artifacts beta">
-  <img src="https://img.shields.io/badge/Mesh-curious-f38020?style=flat-square" alt="Mesh">
-  <img src="https://img.shields.io/badge/Sandboxes-eyeing-f38020?style=flat-square" alt="Sandboxes">
   <img src="https://img.shields.io/badge/TypeScript-5.6-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Hono-4-e36002?style=flat-square&logo=hono&logoColor=white" alt="Hono">
-  <img src="https://img.shields.io/badge/Astro-killed_for_v0.1-ff5d01?style=flat-square&logo=astro&logoColor=white" alt="Astro">
-  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node">
-  <img src="https://img.shields.io/badge/pnpm-9-f69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm">
-  <br>
   <img src="https://img.shields.io/badge/status-pre--alpha-red?style=flat-square" alt="status: pre-alpha">
-  <img src="https://img.shields.io/badge/works_on_my_machine-✓-success?style=flat-square" alt="works on my machine">
-  <img src="https://img.shields.io/badge/YOLO-encouraged-ff69b4?style=flat-square" alt="YOLO">
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome">
-  <img src="https://img.shields.io/badge/made_in-Toronto-red?style=flat-square" alt="Toronto">
-  <img src="https://img.shields.io/badge/replaces-GitHub_(maybe)-181717?style=flat-square&logo=github&logoColor=white" alt="vs GitHub">
-  <img src="https://img.shields.io/badge/depends_on-GitHub_being_up-yellow?style=flat-square&logo=github&logoColor=white" alt="dependency irony">
-  <img src="https://img.shields.io/badge/vibes-immaculate-9146ff?style=flat-square" alt="vibes">
 </p>
 
 <p align="center">

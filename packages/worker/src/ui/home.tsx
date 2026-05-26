@@ -1,6 +1,8 @@
 import type { FC } from "hono/jsx";
+import { marked } from "marked";
 import { Layout } from "./layout";
 import { LOGO_PNG_DATA_URL } from "./logo-data";
+import type { TreeEntry } from "../artifacts/content";
 
 export interface HomeRepo {
   githubFullName: string;
@@ -10,6 +12,13 @@ export interface HomeRepo {
   branches: Array<{ ref: string; sha: string; isDefault?: boolean }>;
   /** Refs we've handled via webhook sync (last synced time per ref). */
   syncedRefs: Array<{ ref: string; sha: string; syncedAt: number }>;
+  content?: {
+    defaultBranch: string;
+    headSha: string;
+    tree: TreeEntry[];
+    readme?: { path: string; text: string };
+    totalBytes: number;
+  };
   error?: string;
 }
 
@@ -122,9 +131,75 @@ git -c http.extraHeader="Authorization: Bearer $ARTIFACTS_TOKEN" \\
     clone "${repo.artifactsRemote}"`}</code></pre>
         </details>
       </div>
+
+      {repo.content ? <RepoContentSection content={repo.content} /> : null}
     </>
   );
 };
+
+const RepoContentSection: FC<{ content: NonNullable<HomeRepo["content"]> }> = ({ content }) => (
+  <>
+    <h2>Files on {content.defaultBranch}</h2>
+    <div class="card">
+      <div class="muted mono" style="font-size: 12px; margin-bottom: 12px;">
+        HEAD {content.headSha.slice(0, 12)} · {content.tree.length} top-level entries · {formatBytes(content.totalBytes)}
+      </div>
+      <table class="refs">
+        <thead>
+          <tr>
+            <th style="width: 60px;">Type</th>
+            <th>Name</th>
+            <th style="text-align: right;">Size</th>
+          </tr>
+        </thead>
+        <tbody>
+          {content.tree.map((e) => (
+            <tr>
+              <td class="mono" style="color: var(--muted);">{e.type === "tree" ? "dir" : "file"}</td>
+              <td class="mono">{e.path}</td>
+              <td class="mono" style="text-align: right; color: var(--muted);">
+                {e.type === "blob" && e.size !== undefined ? formatBytes(e.size) : ""}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    {content.readme ? (
+      <>
+        <h2>{content.readme.path}</h2>
+        <div class="card readme">
+          <div
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(content.readme.text) }}
+          />
+        </div>
+      </>
+    ) : null}
+  </>
+);
+
+function renderMarkdown(src: string): string {
+  try {
+    return marked.parse(src, { async: false }) as string;
+  } catch {
+    return `<pre>${escapeHtml(src)}</pre>`;
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
 
 function formatAgo(ms: number): string {
   const diff = Date.now() - ms;

@@ -13,7 +13,8 @@
   "dependencies": {
     "@gitflare/shared": "workspace:*",
     "hono": "^4.6.0",
-    "isomorphic-git": "^1.27.1"
+    "isomorphic-git": "^1.27.1",
+    "marked": "^14.1.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260101.0",
