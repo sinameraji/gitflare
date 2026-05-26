@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { verifyGithubSignature } from "./github/webhook";
-import { lookupArtifactsRepoName, type Env } from "./env";
+import { lookupArtifactsRepoEntry, parseRepoMap, type Env } from "./env";
 import { repoStubFor } from "./durable-objects/repo";
 import { Home, type HomeRepo } from "./ui/home";
 
@@ -18,23 +18,17 @@ app.get("/favicon.svg", (c) => {
 });
 
 app.get("/", async (c) => {
-  const repoMap = safeParseRepoMap(c.env.REPO_MAP);
+  const repoMap = parseRepoMap(c.env);
   const repos: HomeRepo[] = [];
-  for (const [github, artifactsName] of Object.entries(repoMap)) {
+  for (const [github, entry] of Object.entries(repoMap)) {
     const r: HomeRepo = {
       githubFullName: github,
-      artifactsRepoName: artifactsName,
-      artifactsRemote: "",
+      artifactsRepoName: entry.name,
+      artifactsRemote: entry.remote,
       refs: [],
     };
     try {
-      const handle = await c.env.ARTIFACTS.get(artifactsName);
-      r.artifactsRemote = handle.remote;
-    } catch (err) {
-      r.error = `Artifacts lookup failed: ${(err as Error).message}`;
-    }
-    try {
-      const stub = repoStubFor(c.env, artifactsName);
+      const stub = repoStubFor(c.env, entry.name);
       const resp = await stub.fetch("https://repo-do/state");
       if (resp.ok) {
         const j = (await resp.json()) as { refs: HomeRepo["refs"] };
@@ -49,11 +43,11 @@ app.get("/", async (c) => {
 });
 
 app.get("/api/refs", async (c) => {
-  const repoMap = safeParseRepoMap(c.env.REPO_MAP);
+  const repoMap = parseRepoMap(c.env);
   const out: Record<string, unknown> = {};
-  for (const [github, artifactsName] of Object.entries(repoMap)) {
+  for (const [github, entry] of Object.entries(repoMap)) {
     try {
-      const stub = repoStubFor(c.env, artifactsName);
+      const stub = repoStubFor(c.env, entry.name);
       const resp = await stub.fetch("https://repo-do/state");
       out[github] = resp.ok ? await resp.json() : { error: resp.status };
     } catch (err) {
@@ -94,23 +88,23 @@ app.post("/webhooks/github", async (c) => {
       return c.json({ accepted: true, skipped: "branch-delete" }, 202);
     }
 
-    const artifactsRepoName = lookupArtifactsRepoName(
+    const entry = lookupArtifactsRepoEntry(
       c.env,
       payload.repository.full_name,
     );
-    if (!artifactsRepoName) {
+    if (!entry) {
       return c.json(
         { error: "unknown repo", github: payload.repository.full_name },
         404,
       );
     }
 
-    const stub = repoStubFor(c.env, artifactsRepoName);
+    const stub = repoStubFor(c.env, entry.name);
     const resp = await stub.fetch("https://repo-do/sync", {
       method: "POST",
       body: JSON.stringify({
         githubFullName: payload.repository.full_name,
-        artifactsRepoName,
+        artifactsRepoName: entry.name,
         ref: payload.ref,
         beforeSha: payload.before,
         afterSha: payload.after,
@@ -122,13 +116,5 @@ app.post("/webhooks/github", async (c) => {
 
   return c.json({ accepted: true, skipped: event }, 202);
 });
-
-function safeParseRepoMap(s: string): Record<string, string> {
-  try {
-    return JSON.parse(s) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
 
 export default app;
