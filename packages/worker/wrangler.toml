@@ -1,5 +1,5 @@
 name = "gitflare-sinameraji--kimiflare"
-main = "src/index.ts"
+main = "src/index.tsx"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "b35e975c549e4e6b888ed6a6d436d89f"

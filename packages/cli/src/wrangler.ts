@@ -22,13 +22,18 @@ export function workerPackageDir(): string {
   return candidates[0]!;
 }
 
+export interface RepoMapEntry {
+  name: string;
+  remote: string;
+}
+
 export interface DeployParams {
   workerPackageDir: string;
   cloudflareApiToken: string;
   accountId: string;
   workerName: string;
   artifactsNamespace: string;
-  repoMap: Record<string, string>;
+  repoMap: Record<string, RepoMapEntry>;
 }
 
 export async function writeWranglerToml(p: DeployParams): Promise<void> {

@@ -171,8 +171,8 @@ export async function runInit(
 
   // ---------- 6. Worker deploy ----------
   const webhookSecret = randomHex(32);
-  const repoMap: Record<string, string> = {
-    [`${owner}/${repo}`]: artifactsRepoName,
+  const repoMap = {
+    [`${owner}/${repo}`]: { name: artifactsRepoName, remote: artifactsRemote },
   };
 
   const wDir = workerPackageDir();
