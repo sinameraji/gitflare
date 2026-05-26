@@ -122,40 +122,52 @@ export async function runInit(
   const workerName = `gitflare-${artifactsRepoName}`;
   const workerUrl = `https://${workerName}.${subdomain}.workers.dev`;
 
-  p.note(
-    [
-      `${kleur.bold("About to provision on your Cloudflare account:")}`,
-      "",
-      `  Worker:        ${kleur.cyan(workerName)}`,
-      `  URL:           ${kleur.cyan(workerUrl)}`,
-      `  Artifacts ns:  ${kleur.cyan(namespace)}`,
-      `  Artifacts repo: ${kleur.cyan(artifactsRepoName)}`,
-      `  Importing from: ${kleur.cyan(ghRepo.clone_url)}`,
-      "",
-      `  GitHub webhook will be installed on ${kleur.cyan(`${owner}/${repo}`)} pointing at ${kleur.cyan(workerUrl + "/webhooks/github")}`,
-      "",
-      `  ${kleur.gray("All resources live in your Cloudflare account. GitFlare-the-company sees none of this.")}`,
-    ].join("\n"),
-  );
+  p.log.message(kleur.bold("About to provision on your Cloudflare account:"));
+  p.log.message(`  Worker:         ${kleur.cyan(workerName)}`);
+  p.log.message(`  URL:            ${kleur.cyan(workerUrl)}`);
+  p.log.message(`  Artifacts ns:   ${kleur.cyan(namespace)}`);
+  p.log.message(`  Artifacts repo: ${kleur.cyan(artifactsRepoName)}`);
+  p.log.message(`  Importing from: ${kleur.cyan(ghRepo.clone_url)}`);
+  p.log.message(`  GitHub webhook: ${kleur.cyan(`${owner}/${repo}`)} → ${kleur.gray(workerUrl + "/webhooks/github")}`);
+  p.log.message(kleur.gray("  All resources live in your Cloudflare account. GitFlare-the-company sees none of this."));
+
   const proceed = await p.confirm({ message: "Proceed?", initialValue: true });
   if (p.isCancel(proceed) || !proceed) return p.cancel("Cancelled."), undefined;
 
   // ---------- 5. Import into Artifacts ----------
   // Namespaces auto-provision on first repo creation — no explicit ensure step.
+  // Idempotent on re-run: if the repo exists, we reuse it.
   const provSpin = p.spinner();
   provSpin.start("Importing repo into Artifacts (one-time seed from GitHub)");
+  let artifactsRemote: string;
   try {
     const imported = await cf.importRepo(accountId, namespace, {
       name: artifactsRepoName,
       url: ghRepo.clone_url,
       branch: ghRepo.default_branch,
     });
-    provSpin.stop(`Artifacts repo created: ${kleur.cyan(imported.name)} — ${kleur.gray(imported.remote)}`);
+    artifactsRemote = imported.remote;
+    provSpin.stop(`Artifacts repo created: ${kleur.cyan(imported.name)}`);
   } catch (e) {
-    provSpin.stop("Artifacts import failed");
-    p.log.error((e as Error).message);
-    return;
+    const msg = (e as Error).message;
+    if (/409|already exists/i.test(msg)) {
+      provSpin.message("Repo already exists — fetching existing remote");
+      try {
+        const existing = await cf.getRepo(accountId, namespace, artifactsRepoName);
+        artifactsRemote = existing.remote;
+        provSpin.stop(`Reusing existing Artifacts repo: ${kleur.cyan(existing.name)}`);
+      } catch (e2) {
+        provSpin.stop("Artifacts repo lookup failed");
+        p.log.error((e2 as Error).message);
+        return;
+      }
+    } else {
+      provSpin.stop("Artifacts import failed");
+      p.log.error(msg);
+      return;
+    }
   }
+  p.log.info(`Clone URL: ${kleur.gray(artifactsRemote)}`);
 
   // ---------- 6. Worker deploy ----------
   const webhookSecret = randomHex(32);
