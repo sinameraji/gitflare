@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { createRequire } from "node:module";
 import { runInit } from "./commands/init.js";
 import { runStatus } from "./commands/status.js";
+
+const require = createRequire(import.meta.url);
+const pkg = require("../package.json") as { version?: string };
 
 const program = new Command();
 
 program
   .name("gitflare")
   .description("GitHub-shaped developer experience on Cloudflare primitives")
-  .version("0.0.0");
+  .version(pkg.version ?? "0.0.0");
 
 program
   .command("init")

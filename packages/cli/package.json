@@ -1,6 +1,6 @@
 {
   "name": "gitflare",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "GitHub-shaped developer experience on Cloudflare primitives. Mirror a GitHub repo onto your own Cloudflare account in one command.",
   "license": "MIT",
