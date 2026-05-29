@@ -282,6 +282,9 @@ export async function runInit(
       `  Web UI:  ${kleur.cyan(deployedUrl)}`,
       `  Clone:   ${kleur.gray(`git clone <artifacts-remote-from-dashboard>`)}`,
       `  Push to GitHub → mirror lands in Artifacts in seconds.`,
+      "",
+      kleur.yellow("  The dashboard is publicly readable by anyone with the URL."),
+      `  Run ${kleur.cyan("gitflare access enable")} to gate it behind SSO.`,
     ].join("\n"),
   );
 }

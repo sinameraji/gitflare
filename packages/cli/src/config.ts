@@ -12,6 +12,17 @@ export interface LocalConfig {
     workerName: string;
     workerUrl: string;
     createdAt: string;
+    // Set by `gitflare access enable`; cleared by `disable`.
+    access?: {
+      appId: string;
+      aud: string;
+      teamDomain: string;
+      allowedEmails: string[];
+    };
+    // Set by `gitflare deploy enable`; cleared by `disable`.
+    deploy?: {
+      enabledAt: string;
+    };
   }>;
   // Tokens — kept local, never sent to gitflare servers.
   github?: { token: string };

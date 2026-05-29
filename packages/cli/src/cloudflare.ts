@@ -82,4 +82,64 @@ export class CloudflareClient {
     );
     return r.subdomain;
   }
+
+  // --- Cloudflare Access (Zero Trust) ---
+  // NOTE: exact request/response shapes vary by API version — verify live
+  // before relying on these. `aud` is the tag the Worker validates.
+
+  /**
+   * Returns the account's Zero Trust org auth domain (e.g.
+   * "myteam.cloudflareaccess.com"). Throws if the account has no org yet —
+   * the user must enable Zero Trust once in the dashboard.
+   */
+  async getZeroTrustOrg(
+    accountId: string,
+  ): Promise<{ authDomain: string; name: string }> {
+    const r = await this.req<{ auth_domain: string; name: string }>(
+      "GET",
+      `/accounts/${accountId}/access/organizations`,
+    );
+    if (!r?.auth_domain) {
+      throw new Error("no Zero Trust organization on this account");
+    }
+    return { authDomain: r.auth_domain, name: r.name };
+  }
+
+  async listAccessApps(
+    accountId: string,
+  ): Promise<Array<{ id: string; aud: string; name: string; domain: string }>> {
+    return this.req("GET", `/accounts/${accountId}/access/apps`);
+  }
+
+  async createAccessApp(
+    accountId: string,
+    params: { name: string; domain: string },
+  ): Promise<{ id: string; aud: string }> {
+    return this.req("POST", `/accounts/${accountId}/access/apps`, {
+      type: "self_hosted",
+      name: params.name,
+      domain: params.domain,
+      session_duration: "24h",
+    });
+  }
+
+  async createAccessPolicy(
+    accountId: string,
+    appId: string,
+    params: { name: string; emails: string[] },
+  ): Promise<{ id: string }> {
+    return this.req(
+      "POST",
+      `/accounts/${accountId}/access/apps/${appId}/policies`,
+      {
+        name: params.name,
+        decision: "allow",
+        include: params.emails.map((email) => ({ email: { email } })),
+      },
+    );
+  }
+
+  async deleteAccessApp(accountId: string, appId: string): Promise<void> {
+    await this.req("DELETE", `/accounts/${accountId}/access/apps/${appId}`);
+  }
 }

@@ -88,4 +88,22 @@ footer { color: var(--muted); font-size: 12px; padding: 32px 0; border-top: 1px 
 .readme th { background: var(--bg); color: var(--muted); font-weight: 500; }
 .readme img { max-width: 100%; }
 .readme hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+
+/* highlight.js — compact dark theme tuned to the GitFlare palette. */
+.hljs { color: var(--fg); background: transparent; }
+.hljs-comment, .hljs-quote { color: #6b6b73; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-meta { color: #c792ea; }
+.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-char { color: #8bd49c; }
+.hljs-number, .hljs-literal { color: #f78c6c; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: #82aaff; }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable { color: #ffcb6b; }
+.hljs-type, .hljs-class .hljs-title, .hljs-title.class_ { color: #ffcb6b; }
+.hljs-tag { color: #8b8b91; }
+.hljs-name { color: #f07178; }
+.hljs-params { color: var(--fg); }
+.hljs-deletion { color: var(--err); }
+.hljs-addition { color: var(--ok); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+.hljs-link { color: var(--accent); }
 `;

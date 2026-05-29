@@ -19,6 +19,12 @@ export interface DeployParams {
   workerName: string;
   artifactsNamespace: string;
   repoMap: Record<string, RepoMapEntry>;
+  // Cloudflare Access (set by `gitflare access enable`). Both present → the
+  // Worker gates its dashboard/API behind Access; both absent → public mirror.
+  accessAud?: string;
+  accessTeamDomain?: string;
+  // Continuous deploy (set by `gitflare deploy enable`). Emits CD_ENABLED="1".
+  cdEnabled?: boolean;
 }
 
 export interface DeployResult {
@@ -69,9 +75,27 @@ async function locateWorker(): Promise<
   );
 }
 
-function bundledToml(p: DeployParams, version: string): string {
+function varsBlock(p: DeployParams, version: string): string {
+  let out = `[vars]
+GITFLARE_VERSION = "${version}"
+ACCOUNT_ID = "${p.accountId}"
+REPO_MAP = ${JSON.stringify(JSON.stringify(p.repoMap))}
+`;
+  if (p.accessAud && p.accessTeamDomain) {
+    out += `ACCESS_AUD = ${JSON.stringify(p.accessAud)}
+ACCESS_TEAM_DOMAIN = ${JSON.stringify(p.accessTeamDomain)}
+`;
+  }
+  if (p.cdEnabled) {
+    out += `CD_ENABLED = "1"
+`;
+  }
+  return out;
+}
+
+function tomlFor(main: string, p: DeployParams, version: string): string {
   return `name = "${p.workerName}"
-main = "worker.js"
+main = "${main}"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "${p.accountId}"
@@ -84,39 +108,27 @@ namespace = "${p.artifactsNamespace}"
 name = "REPO"
 class_name = "RepoDO"
 
+[[durable_objects.bindings]]
+name = "DEPLOY"
+class_name = "DeployDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RepoDO"]
 
-[vars]
-GITFLARE_VERSION = "${version}"
-REPO_MAP = ${JSON.stringify(JSON.stringify(p.repoMap))}
-`;
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["DeployDO"]
+
+${varsBlock(p, version)}`;
+}
+
+function bundledToml(p: DeployParams, version: string): string {
+  return tomlFor("worker.js", p, version);
 }
 
 function sourceToml(p: DeployParams, version: string): string {
-  return `name = "${p.workerName}"
-main = "src/index.tsx"
-compatibility_date = "2026-05-01"
-compatibility_flags = ["nodejs_compat"]
-account_id = "${p.accountId}"
-
-[[artifacts]]
-binding = "ARTIFACTS"
-namespace = "${p.artifactsNamespace}"
-
-[[durable_objects.bindings]]
-name = "REPO"
-class_name = "RepoDO"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["RepoDO"]
-
-[vars]
-GITFLARE_VERSION = "${version}"
-REPO_MAP = ${JSON.stringify(JSON.stringify(p.repoMap))}
-`;
+  return tomlFor("src/index.tsx", p, version);
 }
 
 async function getCliVersion(): Promise<string> {

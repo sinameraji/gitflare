@@ -6,10 +6,21 @@ import { listArtifactsRefs } from "./artifacts/refs";
 import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt } from "./artifacts/content";
 import { Browse } from "./ui/browse";
 import { Home, type HomeRepo } from "./ui/home";
+import { Deployments } from "./ui/deployments";
+import { NotFound, ErrorView } from "./ui/states";
+import { accessGuard, type AccessVariables } from "./access/middleware";
+import { deployStubFor, type DeployRecord } from "./durable-objects/deploy";
 
 export { RepoDO } from "./durable-objects/repo";
+export { DeployDO } from "./durable-objects/deploy";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
+
+// /health and /webhooks/github stay open (the latter is HMAC-gated). Everything
+// human- or API-facing is gated behind Cloudflare Access when ACCESS_AUD is set.
+app.use("/", accessGuard);
+app.use("/r/*", accessGuard);
+app.use("/api/*", accessGuard);
 
 app.get("/health", (c) =>
   c.json({ ok: true, version: c.env.GITFLARE_VERSION ?? "0.0.0" }),
@@ -66,10 +77,32 @@ function findRepoByArtifactsName(env: Env, artifactsName: string):
   return undefined;
 }
 
+const CONTENT_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  ico: "image/x-icon",
+  bmp: "image/bmp",
+  avif: "image/avif",
+  pdf: "application/pdf",
+};
+
+function contentTypeFor(path: string): string {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  return CONTENT_TYPES[ext] ?? "application/octet-stream";
+}
+
 app.get("/r/:name/tree/*", async (c) => {
   const name = c.req.param("name");
   const repo = findRepoByArtifactsName(c.env, name);
-  if (!repo) return c.text(`Unknown repo: ${name}`, 404);
+  if (!repo)
+    return c.html(
+      <NotFound title="Repo not found" detail={`No mirror named “${name}” is configured on this Worker.`} />,
+      404,
+    );
 
   const prefix = `/r/${name}/tree/`;
   const path = decodeURIComponent(c.req.path.slice(prefix.length)).replace(/^\/+|\/+$/g, "");
@@ -78,7 +111,16 @@ app.get("/r/:name/tree/*", async (c) => {
     const handle = await c.env.ARTIFACTS.get(name);
     const shallow = await cloneRepoShallow(handle, repo.remote);
     const entries = await listTreeAt(shallow, path);
-    if (!entries) return c.text(`Path not found: ${path}`, 404);
+    if (!entries)
+      return c.html(
+        <NotFound
+          title="Path not found"
+          detail={`“${path}” doesn't exist on ${shallow.branchName}.`}
+          backHref={`/r/${name}/tree/`}
+          backLabel="← Repo root"
+        />,
+        404,
+      );
     return c.html(
       <Browse
         githubFullName={repo.githubFullName}
@@ -91,14 +133,18 @@ app.get("/r/:name/tree/*", async (c) => {
       />,
     );
   } catch (err) {
-    return c.text(`Error: ${(err as Error).message}`, 500);
+    return c.html(<ErrorView detail={(err as Error).message} backHref={`/r/${name}/tree/`} />, 500);
   }
 });
 
 app.get("/r/:name/blob/*", async (c) => {
   const name = c.req.param("name");
   const repo = findRepoByArtifactsName(c.env, name);
-  if (!repo) return c.text(`Unknown repo: ${name}`, 404);
+  if (!repo)
+    return c.html(
+      <NotFound title="Repo not found" detail={`No mirror named “${name}” is configured on this Worker.`} />,
+      404,
+    );
 
   const prefix = `/r/${name}/blob/`;
   const path = decodeURIComponent(c.req.path.slice(prefix.length)).replace(/^\/+|\/+$/g, "");
@@ -107,7 +153,16 @@ app.get("/r/:name/blob/*", async (c) => {
     const handle = await c.env.ARTIFACTS.get(name);
     const shallow = await cloneRepoShallow(handle, repo.remote);
     const blob = await readBlobAt(shallow, path);
-    if (!blob) return c.text(`File not found: ${path}`, 404);
+    if (!blob)
+      return c.html(
+        <NotFound
+          title="File not found"
+          detail={`“${path}” doesn't exist on ${shallow.branchName}.`}
+          backHref={`/r/${name}/tree/`}
+          backLabel="← Repo root"
+        />,
+        404,
+      );
     return c.html(
       <Browse
         githubFullName={repo.githubFullName}
@@ -119,6 +174,35 @@ app.get("/r/:name/blob/*", async (c) => {
         version={c.env.GITFLARE_VERSION ?? "0.0.0"}
       />,
     );
+  } catch (err) {
+    return c.html(<ErrorView detail={(err as Error).message} backHref={`/r/${name}/tree/`} />, 500);
+  }
+});
+
+// Raw blob proxy — serves file bytes straight from the Artifacts mirror. Used
+// for README images so they render for private repos and survive GitHub
+// outages. Under /r/* so the Access guard already covers it.
+app.get("/r/:name/raw/*", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return c.text(`Unknown repo: ${name}`, 404);
+
+  const prefix = `/r/${name}/raw/`;
+  const path = decodeURIComponent(c.req.path.slice(prefix.length)).replace(/^\/+|\/+$/g, "");
+
+  try {
+    const handle = await c.env.ARTIFACTS.get(name);
+    const shallow = await cloneRepoShallow(handle, repo.remote);
+    const blob = await readBlobAt(shallow, path);
+    if (!blob) return c.text(`File not found: ${path}`, 404);
+    // bytes is a plain Uint8Array; the cast sidesteps the ArrayBufferLike vs
+    // ArrayBuffer generic mismatch in the typed-array lib types.
+    return new Response(blob.bytes as unknown as BodyInit, {
+      headers: {
+        "Content-Type": contentTypeFor(path),
+        "Cache-Control": "public, max-age=300",
+      },
+    });
   } catch (err) {
     return c.text(`Error: ${(err as Error).message}`, 500);
   }
@@ -137,6 +221,33 @@ app.get("/api/refs", async (c) => {
     }
   }
   return c.json(out);
+});
+
+app.get("/r/:name/deployments", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo)
+    return c.html(
+      <NotFound title="Repo not found" detail={`No mirror named “${name}” is configured on this Worker.`} />,
+      404,
+    );
+  let deploys: DeployRecord[] = [];
+  try {
+    const stub = deployStubFor(c.env, name);
+    const resp = await stub.fetch("https://deploy-do/state");
+    if (resp.ok) ({ deploys } = (await resp.json()) as { deploys: DeployRecord[] });
+  } catch {
+    // Soft fail — show an empty list.
+  }
+  return c.html(
+    <Deployments
+      githubFullName={repo.githubFullName}
+      artifactsRepoName={name}
+      deploys={deploys}
+      cdEnabled={c.env.CD_ENABLED === "1"}
+      version={c.env.GITFLARE_VERSION ?? "0.0.0"}
+    />,
+  );
 });
 
 app.post("/webhooks/github", async (c) => {
@@ -193,6 +304,24 @@ app.post("/webhooks/github", async (c) => {
       }),
     });
     const json = await resp.json();
+
+    // CD (v0.2): once the sync landed, kick off a deploy. DeployDO no-ops if
+    // there's no .gitflare/deploy.yml or CD isn't enabled. Runs after the
+    // response so the webhook returns fast.
+    if (resp.ok) {
+      const deploy = deployStubFor(c.env, entry.name);
+      c.executionCtx.waitUntil(
+        deploy.fetch("https://deploy-do/deploy", {
+          method: "POST",
+          body: JSON.stringify({
+            artifactsRepoName: entry.name,
+            remote: entry.remote,
+            ref: payload.ref,
+            sha: payload.after,
+          }),
+        }),
+      );
+    }
     return c.json({ accepted: true, result: json }, resp.ok ? 202 : 500);
   }
 
