@@ -1,6 +1,8 @@
 import type { FC } from "hono/jsx";
+import { raw } from "hono/html";
 import { Layout } from "./layout";
 import { LOGO_PNG_DATA_URL } from "./logo-data";
+import { highlightCode } from "./highlight";
 import type { TreeEntry, BlobAtPath } from "../artifacts/content";
 
 interface BrowseProps {
@@ -117,18 +119,33 @@ const TreeView: FC<{ repoName: string; basePath: string; entries: TreeEntry[] }>
   </div>
 );
 
-const BlobView: FC<{ blob: BlobAtPath }> = ({ blob }) => (
-  <div class="card">
-    <div class="muted mono" style="font-size: 12px; margin-bottom: 12px;">
-      {formatBytes(blob.size)}{blob.isBinary ? " · binary" : ""}
+const PRE_STYLE =
+  "margin: 0; padding: 12px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; max-height: 70vh;";
+
+const BlobView: FC<{ blob: BlobAtPath }> = ({ blob }) => {
+  const text = blob.text ?? "";
+  const highlighted = blob.isBinary ? null : highlightCode(text, blob.path);
+  return (
+    <div class="card">
+      <div class="muted mono" style="font-size: 12px; margin-bottom: 12px;">
+        {formatBytes(blob.size)}
+        {blob.isBinary ? " · binary" : ""}
+        {highlighted ? ` · ${highlighted.lang}` : ""}
+      </div>
+      {blob.isBinary ? (
+        <div class="empty">Binary file — preview not shown.</div>
+      ) : highlighted ? (
+        <pre style={PRE_STYLE}>
+          <code class="mono hljs">{raw(highlighted.html)}</code>
+        </pre>
+      ) : (
+        <pre style={PRE_STYLE}>
+          <code class="mono">{text}</code>
+        </pre>
+      )}
     </div>
-    {blob.isBinary ? (
-      <div class="empty">Binary file — preview not shown.</div>
-    ) : (
-      <pre style="margin: 0; padding: 12px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; max-height: 70vh;"><code class="mono">{blob.text ?? ""}</code></pre>
-    )}
-  </div>
-);
+  );
+};
 
 function parentPath(p: string): string {
   const i = p.lastIndexOf("/");

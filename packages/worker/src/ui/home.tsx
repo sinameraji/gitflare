@@ -22,8 +22,13 @@ export interface HomeRepo {
   error?: string;
 }
 
-function rewriteReadmeImages(md: string, githubFullName: string, branch: string): string {
-  const base = `https://raw.githubusercontent.com/${githubFullName}/${branch}`;
+// Rewrite relative README image paths to the Worker's own raw-blob proxy
+// (/r/<name>/raw/<path>). Serving from the Artifacts mirror — rather than
+// raw.githubusercontent.com — means images render for private repos too and
+// keep working during a GitHub outage. The README lives at the repo root, so
+// relative paths resolve from there.
+function rewriteReadmeImages(md: string, artifactsRepoName: string): string {
+  const base = `/r/${artifactsRepoName}/raw`;
   // ![alt](url) — handle markdown image syntax
   let out = md.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, alt, url) => {
     const u = String(url).trim();
@@ -60,8 +65,14 @@ export const Home: FC<{ repos: HomeRepo[]; version: string }> = ({
       </p>
 
       {repos.length === 0 ? (
-        <div class="empty" style="margin-top: 24px;">
-          No repos configured yet. Set <code>REPO_MAP</code> on this Worker (the CLI does this for you) and re-deploy.
+        <div class="empty" style="margin-top: 24px; text-align: left;">
+          <div style="margin-bottom: 12px;">No repos mirrored on this Worker yet.</div>
+          <pre style="margin: 0 0 12px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto;"><code class="mono">npx gitflare init github.com/&lt;owner&gt;/&lt;repo&gt;</code></pre>
+          <div class="muted">
+            Runs on your machine, provisions into your own Cloudflare account, and sets{" "}
+            <code>REPO_MAP</code> here.{" "}
+            <a href="https://github.com/sinameraji/gitflare/blob/main/QUICKSTART.md">Full walkthrough →</a>
+          </div>
         </div>
       ) : (
         repos.map((r) => <RepoCard key={r.githubFullName} repo={r} />)
@@ -199,7 +210,7 @@ const RepoContentSection: FC<{ repo: HomeRepo; content: NonNullable<HomeRepo["co
           <div
             dangerouslySetInnerHTML={{
               __html: renderMarkdown(
-                rewriteReadmeImages(content.readme.text, repo.githubFullName, content.defaultBranch),
+                rewriteReadmeImages(content.readme.text, repo.artifactsRepoName),
               ),
             }}
           />
