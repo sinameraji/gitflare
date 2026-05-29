@@ -14,6 +14,9 @@ export interface Env {
   // CD deploy token (optional — set by `gitflare deploy enable`). Scoped to
   // Workers Scripts: Edit on the user's own account. Absent = CD disabled.
   CF_DEPLOY_TOKEN?: string;
+  // Bearer secret the CLI presents to /control/* endpoints (manual deploy,
+  // rollback, deploy list). Set by `gitflare deploy enable`.
+  CONTROL_SECRET?: string;
 
   // Vars
   GITFLARE_VERSION: string;
