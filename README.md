@@ -20,8 +20,8 @@ GitFlare ships in versions. Each one stands alone — if the next one never gets
 
 | Version | Status | What it does |
 |---|---|---|
-| **v0.1** | ✅ **shipping — you are here** | **Read replica.** One command mirrors a GitHub repo into your Cloudflare account: Artifacts for git storage, a Worker that takes GitHub webhooks + serves a dashboard, file browsing, README rendering, sync status. If GitHub is down, reads + clones still work. |
-| v0.2 | 🚧 next | **CD that doesn't depend on GitHub.** Push to GitHub → your GitFlare Worker runs `wrangler deploy` against your own account. When GitHub Actions is down, your prod still ships. |
+| **v0.1** | ✅ **shipping — you are here** | **Read replica.** One command mirrors a GitHub repo into your Cloudflare account: Artifacts for git storage, a Worker that takes GitHub webhooks + serves a dashboard, file browsing with syntax highlighting, README rendering (images proxied through your Worker), sync status. Optional Cloudflare Access gates the dashboard for private repos. If GitHub is down, reads + clones still work. |
+| v0.2 | 🧪 code-complete (pending a live run) | **CD that doesn't depend on GitHub.** Push → your Worker deploys to your own account: Workers + Pages (with preview deploys), bindings (vars/KV/R2/D1/DO/services), opt-in D1 migrations, live deploy logs over WebSocket, plus `deploy run` (the GitHub-down escape hatch), `deploy list`, and `deploy rollback`. Deploys **pre-built** artifacts via `.gitflare/deploy.yml`; arbitrary build steps arrive with v0.3 CI. |
 | v0.3 | 📋 planned | **Generic CI.** A small declarative workflow format that runs tests on Cloudflare Sandboxes (full Linux) or Dynamic Workers (fast JS path). Build cache in R2. Browser Run for E2E. |
 | v0.4 | 📋 planned | **Multi-user teams.** PRs, reviews, comments — native to GitFlare, bidirectionally mirrored to GitHub. Stacked diffs. "Open PR in sandbox" one-click ephemeral env. |
 | v0.5 | 📋 planned | **Cross-tenant collaboration via Cloudflare Mesh.** Alice and Bob on separate Cloudflare accounts; private repos served Mesh-only with per-identity policies instead of SSH keys. |
@@ -52,15 +52,45 @@ The CLI walks you through a GitHub PAT + a scoped Cloudflare API token (three ac
 
 GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed CLI; everything it provisions runs on infrastructure you own.
 
+### Other commands
+
+- `gitflare status` — sync status for the repos you've provisioned.
+- `gitflare access enable` — gate the dashboard + API behind Cloudflare Access SSO (free up to 50 seats on Cloudflare One). Note: this protects the web UI/API; `git clone` from Artifacts isn't gated yet — that's a later version.
+- `gitflare deploy enable` — turn on continuous deploy. Commit a `.gitflare/deploy.yml` and your **pre-built** Worker (or Pages site) ships on every push, straight from your account:
+
+  ```yaml
+  on: push
+  branches: [main]
+  steps:
+    - cloudflare/deploy:
+        project: my-worker
+        kind: worker            # or "pages"
+        entry: dist/worker.js   # worker: a built single-file ES module; pages: a directory
+        vars:
+          API_BASE: https://example.com
+        kv:
+          - { binding: CACHE, id: "<namespace-id>" }
+        d1:
+          - { binding: DB, database_id: "<id>" }
+        migrations:             # optional; runs only with apply: true (idempotent)
+          dir: migrations
+          database_id: "<id>"
+          apply: true
+  ```
+
+- `gitflare deploy run` — deploy the current Artifacts HEAD right now. This is the **GitHub-down escape hatch**: push straight to your Artifacts remote, then run this; no GitHub involved.
+- `gitflare deploy list` / `gitflare deploy rollback [--to <id>]` — review deploy history and roll back to a previous successful deploy.
+
+  Deploys and their **live logs** show up at `<dashboard-url>/r/<repo>/deployments`.
+
 ## Contributing
 
-Pre-alpha, built in the open, and there's a lot of obvious next work. PRs and issues are welcome — particularly on:
+Pre-alpha, built in the open, and there's a lot of obvious next work. Cloudflare Access (M5), syntax highlighting, the image proxy, and the full v0.2 CD feature set have landed — see [PLAN.md §12](./PLAN.md#12-milestones-and-development-log) for current status. PRs and issues are welcome — particularly on:
 
-- **v0.2 (CD).** The plumbing for a `.gitflare/deploy.yml` workflow that runs on push and shells out to `wrangler deploy`. Sketched in [PLAN.md §4](./PLAN.md#v02--deploy-without-github-cd).
-- **M5: Cloudflare Access in front of the Worker** so private repos actually stay private. The dashboard is currently public-readable to anyone with the URL.
-- **Syntax highlighting** in the file viewer (Shiki has a Workers-compatible port).
-- **Image proxy** through the Worker so README images render for private repos too (currently we rewrite to GitHub raw URLs, which only works for public repos).
-- **Better empty states / error messages** anywhere in the CLI or dashboard.
+- **Live-validating M5 + v0.2** against a real Cloudflare account. The Access apps/policies API, the Workers Scripts upload, Pages Direct Upload, and the D1 query path are coded to spec but need an end-to-end run.
+- **v0.2 build steps.** CD currently deploys pre-built artifacts; running `npm run build` needs a Linux runtime (Sandboxes) — that's [v0.3](./PLAN.md#v03--generic-ci-tests-lint-build).
+- **Private `git clone`.** Access gates the dashboard, but clone still hits Artifacts directly. Closing that needs an Access service token / Mesh path (v0.4+).
+- **Custom domains** in front of the Worker, and **better empty states / error messages** anywhere in the CLI or dashboard.
 - **Anything in [PLAN.md §8 Open Questions](./PLAN.md#8-open-questions-to-resolve-before-v01-starts)** you have a strong opinion on.
 
 How to contribute:
@@ -68,6 +98,10 @@ How to contribute:
 1. Open an issue describing what you want to do (so we don't duplicate work).
 2. Fork, branch, code. The repo is a pnpm workspace; `pnpm install && pnpm -r typecheck && pnpm -r test` should pass.
 3. Open a PR. Small, focused PRs land fastest.
+
+### Releasing
+
+Releases are automated with [Release Please](https://github.com/googleapis/release-please). Write PR titles as [Conventional Commits](https://www.conventionalcommits.org/) — `feat:` → minor, `fix:` → patch, `feat!:` / `BREAKING CHANGE` → major; `docs:`/`chore:` don't trigger a release. On merge to `main`, a release PR is opened that bumps the version and changelog; merging *that* tags the release and publishes [`gitflare`](https://www.npmjs.com/package/gitflare) to npm.
 
 If you just want to talk through an idea, open a Discussion or DM [@sinameraji](https://github.com/sinameraji).
 
