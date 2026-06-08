@@ -4,7 +4,13 @@ import { createRequire } from "node:module";
 import { runInit } from "./commands/init.js";
 import { runStatus } from "./commands/status.js";
 import { runAccessEnable, runAccessDisable } from "./commands/access.js";
-import { runDeployEnable, runDeployDisable } from "./commands/deploy.js";
+import {
+  runDeployEnable,
+  runDeployDisable,
+  runDeployRun,
+  runDeploysList,
+  runDeployRollback,
+} from "./commands/deploy.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version?: string };
@@ -55,5 +61,21 @@ deploy
   .description("Disable CD for a repo")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
   .action(runDeployDisable);
+deploy
+  .command("run")
+  .description("Deploy the current Artifacts HEAD now (the GitHub-down escape hatch)")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runDeployRun);
+deploy
+  .command("list")
+  .description("List recent deploys for a repo")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runDeploysList);
+deploy
+  .command("rollback")
+  .description("Roll back to a previous deploy (default: last successful)")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .option("--to <id>", "deploy id to roll back to")
+  .action(runDeployRollback);
 
 program.parseAsync(process.argv);

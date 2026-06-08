@@ -250,6 +250,78 @@ app.get("/r/:name/deployments", async (c) => {
   );
 });
 
+// Live deploy-log WebSocket — the Deployments page connects here. Under /r/* so
+// the Access guard covers it; the upgrade is forwarded to the DeployDO.
+app.get("/r/:name/deployments/stream", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return c.text("unknown repo", 404);
+  if (c.req.header("Upgrade") !== "websocket") return c.text("expected websocket", 426);
+  const stub = deployStubFor(c.env, name);
+  return stub.fetch(new Request("https://deploy-do/stream", c.req.raw));
+});
+
+// ---- Control plane (CLI → Worker), authed by CONTROL_SECRET, not Access ----
+// Mirrors how /webhooks/github sits outside Access with its own auth.
+
+function controlAuthorized(c: { req: { header: (n: string) => string | undefined }; env: Env }): boolean {
+  const secret = c.env.CONTROL_SECRET;
+  if (!secret) return false;
+  const auth = c.req.header("Authorization") ?? "";
+  const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (provided.length !== secret.length) return false;
+  let diff = 0;
+  for (let i = 0; i < secret.length; i++) diff |= provided.charCodeAt(i) ^ secret.charCodeAt(i);
+  return diff === 0;
+}
+
+app.post("/control/deploy/run", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const { repo } = (await c.req.json().catch(() => ({}))) as { repo?: string };
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = deployStubFor(c.env, entry.name);
+  c.executionCtx.waitUntil(
+    stub.fetch("https://deploy-do/deploy", {
+      method: "POST",
+      body: JSON.stringify({ artifactsRepoName: entry.name, remote: entry.remote, ref: "", sha: "", mode: "manual" }),
+    }),
+  );
+  return c.json({ accepted: true }, 202);
+});
+
+app.post("/control/deploy/rollback", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const { repo, toDeployId } = (await c.req.json().catch(() => ({}))) as {
+    repo?: string;
+    toDeployId?: number;
+  };
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = deployStubFor(c.env, entry.name);
+  c.executionCtx.waitUntil(
+    stub.fetch("https://deploy-do/rollback", {
+      method: "POST",
+      body: JSON.stringify({
+        artifactsRepoName: entry.name,
+        remote: entry.remote,
+        ...(toDeployId ? { toDeployId } : {}),
+      }),
+    }),
+  );
+  return c.json({ accepted: true }, 202);
+});
+
+app.get("/control/deployments", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const repo = c.req.query("repo");
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = deployStubFor(c.env, entry.name);
+  const resp = await stub.fetch("https://deploy-do/state");
+  return c.json(resp.ok ? ((await resp.json()) as object) : { deploys: [] });
+});
+
 app.post("/webhooks/github", async (c) => {
   const signature = c.req.header("x-hub-signature-256");
   const event = c.req.header("x-github-event");

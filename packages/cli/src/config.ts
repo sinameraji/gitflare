@@ -22,6 +22,8 @@ export interface LocalConfig {
     // Set by `gitflare deploy enable`; cleared by `disable`.
     deploy?: {
       enabledAt: string;
+      // Bearer secret the CLI presents to the Worker's /control/* endpoints.
+      controlSecret: string;
     };
   }>;
   // Tokens — kept local, never sent to gitflare servers.
