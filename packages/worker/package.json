@@ -14,7 +14,7 @@
     "@cloudflare/sandbox": "0.12.3",
     "@gitflare/shared": "workspace:*",
     "highlight.js": "^11.11.1",
-    "hono": "^4.6.0",
+    "hono": "^4.12.26",
     "isomorphic-git": "^1.27.1",
     "marked": "^14.1.0"
   },

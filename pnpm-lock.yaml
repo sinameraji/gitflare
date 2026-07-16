@@ -66,8 +66,8 @@ importers:
         specifier: ^11.11.1
         version: 11.11.1
       hono:
-        specifier: ^4.6.0
-        version: 4.12.23
+        specifier: ^4.12.26
+        version: 4.12.30
       isomorphic-git:
         specifier: ^1.27.1
         version: 1.38.2
