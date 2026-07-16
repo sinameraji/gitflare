@@ -88,8 +88,6 @@ export async function runDeployEnable(repoArg: string | undefined): Promise<void
   // copy already exists — enabling one feature must never strand the other's.
   const controlSecret =
     entry.deploy?.controlSecret ?? entry.ci?.controlSecret ?? randomHex(32);
-  const freshControlSecret =
-    !entry.deploy?.controlSecret && !entry.ci?.controlSecret;
   entry.deploy = { enabledAt: new Date().toISOString(), controlSecret };
   if (entry.ci && entry.ci.controlSecret !== controlSecret) {
     entry.ci.controlSecret = controlSecret;
@@ -97,20 +95,22 @@ export async function runDeployEnable(repoArg: string | undefined): Promise<void
   sp.start("Redeploying Worker with CD enabled");
   try {
     const res = await redeployWorker(entry, cfToken, remote);
+    // Persist as soon as the Worker is live with CD_ENABLED, before the secret
+    // step — so a secret failure can't leave the Worker enabled while local
+    // config still says disabled (which would make `deploy disable` a no-op).
+    cfg.cloudflare = { token: cfToken };
+    await saveConfig(cfg);
     sp.message("Setting deploy secrets");
     await wranglerSecret(res.workDir, cfToken, "CF_DEPLOY_TOKEN", deployToken);
-    if (freshControlSecret) {
-      await wranglerSecret(res.workDir, cfToken, "CONTROL_SECRET", controlSecret);
-    }
+    // Always (re)write CONTROL_SECRET — idempotent, and it re-establishes the
+    // secret if the Worker was recreated (dashboard delete + re-provision).
+    await wranglerSecret(res.workDir, cfToken, "CONTROL_SECRET", controlSecret);
     sp.stop("Worker redeployed with CD enabled");
   } catch (e) {
-    sp.stop("Redeploy failed");
+    sp.stop("Redeploy or secret step failed");
     p.log.error((e as Error).message);
     return;
   }
-
-  cfg.cloudflare = { token: cfToken };
-  await saveConfig(cfg);
 
   p.outro(
     [

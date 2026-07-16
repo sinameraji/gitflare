@@ -215,6 +215,31 @@ export function deployJobsOf(wf: CiWorkflow): CiJob[] {
   return wf.jobs.filter((j) => j.kind === "deploy");
 }
 
+/**
+ * Run-job names in a job's transitive `needs` closure. These are the jobs that
+ * may have written build artifacts into the shared workspace; a deploy job may
+ * only ship those artifacts if all of these succeeded (an empty result means
+ * the deploy job built nothing and must deploy the committed file).
+ */
+export function runJobsInNeedsClosure(wf: CiWorkflow, jobName: string): string[] {
+  const byName = new Map(wf.jobs.map((j) => [j.name, j]));
+  const start = byName.get(jobName);
+  if (!start) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const stack = [...start.needs];
+  while (stack.length > 0) {
+    const name = stack.pop()!;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const dep = byName.get(name);
+    if (!dep) continue;
+    if (dep.kind === "run") out.push(name);
+    stack.push(...dep.needs);
+  }
+  return out;
+}
+
 /** All cloudflare/deploy steps of one job (or of all deploy jobs when job is undefined). */
 export function deployStepsOf(wf: CiWorkflow, job?: string): { steps?: DeployStep[]; error?: string } {
   const jobs = job === undefined ? deployJobsOf(wf) : wf.jobs.filter((j) => j.name === job);

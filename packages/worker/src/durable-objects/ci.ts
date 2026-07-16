@@ -11,6 +11,7 @@ import { branchOf } from "../deploy/workflow";
 import {
   parseCiWorkflow,
   ciMatchesPush,
+  runJobsInNeedsClosure,
   CI_WORKFLOW_PATH,
   type CiJob,
   type CiWorkflow,
@@ -23,6 +24,7 @@ import {
   type SandboxHandle,
 } from "../ci/sandbox-runner";
 import { postCommitStatus, type CommitState } from "../ci/github-status";
+import { interpretDeployResponse } from "../ci/delegation";
 import { deployStubFor, type DeployRecord } from "./deploy";
 
 const MAX_LOG_LINES = 500;
@@ -79,6 +81,10 @@ export class CiDO {
   private inFlight: Promise<unknown> | null = null;
   private current: CiRunRecord | null = null;
   private cancelRequested = false;
+  // Runs the watchdog (or a cancel) has already written a terminal state for.
+  // A still-executing pipeline coroutine must not resurrect these back to
+  // "running" or post a contradictory second GitHub status.
+  private finalizedRunIds = new Set<number>();
   // Latest queued push sha per branch — a queued run superseded by a newer
   // push records "skipped" instead of burning a sandbox. In-memory only:
   // best-effort, and an evicted queue has nothing left to supersede anyway.
@@ -116,6 +122,9 @@ export class CiDO {
     }
 
     if (request.method === "POST" && url.pathname === "/cancel") {
+      // Cancel applies to a run that has begun (has jobs + a sandbox). A run
+      // still in its pre-clone window (this.current not yet set) can't be
+      // cancelled yet — the clone is seconds and the CLI can retry.
       if (!this.current) {
         return Response.json({ accepted: false, message: "no run in progress" });
       }
@@ -162,14 +171,15 @@ export class CiDO {
       for (const j of run.jobs) {
         if (j.status === "running" || j.status === "pending") j.status = "skipped";
       }
+      // Write the terminal state BEFORE marking it finalized (record() no-ops
+      // for finalized ids), then fence off the live pipeline so it can't
+      // resurrect this run or post a contradictory status.
       await this.record(run);
+      this.finalizedRunIds.add(run.id);
       this.broadcast({ type: "done", record: run });
       await this.destroySandbox(run.id).catch(() => undefined);
       await this.postStatus(run, "failure", run.message);
-      if (isCurrent) {
-        this.current = null;
-        this.cancelRequested = false;
-      }
+      if (isCurrent) this.current = null;
     }
   }
 
@@ -202,6 +212,10 @@ export class CiDO {
   }
 
   private async record(r: CiRunRecord): Promise<void> {
+    // Once the watchdog/cancel finalized a run, never write over its terminal
+    // record (a lagging pipeline coroutine would otherwise flip it back to
+    // "running" and then "success").
+    if (this.finalizedRunIds.has(r.id)) return;
     await this.state.storage.put<CiRunRecord>(`run:${String(r.id).padStart(10, "0")}`, r);
   }
 
@@ -238,6 +252,12 @@ export class CiDO {
     this.current = rec;
     this.cancelRequested = false;
     await this.record(rec);
+    // Arm a short fallback alarm if none is set, so an eviction between here
+    // and runPipeline's real deadline alarm still gets this run failed by the
+    // watchdog instead of leaving a zombie "running" record forever.
+    if ((await this.state.storage.getAlarm()) === null) {
+      await this.state.storage.setAlarm(Date.now() + 60_000);
+    }
     this.broadcast({ type: "start", record: rec });
     this.log(`ci run #${id} started (${mode}, ${rec.branch} @ ${sha.slice(0, 8)})`);
     return rec;
@@ -248,6 +268,13 @@ export class CiDO {
     status: CiRunRecord["status"],
     message?: string,
   ): Promise<CiRunRecord> {
+    // The watchdog already wrote a terminal state — don't overwrite it or emit
+    // a second, contradictory "done"/commit status.
+    if (this.finalizedRunIds.has(rec.id)) {
+      this.finalizedRunIds.delete(rec.id);
+      if (this.current === rec) this.current = null;
+      return rec;
+    }
     rec.status = status;
     rec.finishedAt = Date.now();
     if (message) rec.message = message;
@@ -265,6 +292,7 @@ export class CiDO {
     description: string,
   ): Promise<void> {
     // Soft-fail by construction: GitHub being down is gitflare's raison d'être.
+    if (this.finalizedRunIds.has(rec.id)) return;
     if (!rec.githubFullName || !/^[0-9a-f]{40}$/.test(rec.sha)) return;
     await postCommitStatus({
       githubFullName: rec.githubFullName,
@@ -300,8 +328,23 @@ export class CiDO {
       await this.executeRunInner(req);
     } catch (e) {
       // Never let one run poison the serialize chain.
+      const msg = (e as Error).message;
       if (this.current) {
-        await this.finish(this.current, "failed", (e as Error).message).catch(() => undefined);
+        await this.finish(this.current, "failed", msg).catch(() => undefined);
+      } else {
+        // Failed before a run record existed — leave a trace instead of a
+        // silently-vanished push: a red commit status (if we know the sha).
+        console.error(`CI run failed before begin(): ${msg}`);
+        if (req.githubFullName && /^[0-9a-f]{40}$/.test(req.sha)) {
+          await postCommitStatus({
+            githubFullName: req.githubFullName,
+            sha: req.sha,
+            state: "error",
+            description: `CI failed to start: ${msg}`,
+            token: this.env.GITHUB_TOKEN,
+            ...(req.statusTargetUrl ? { targetUrl: req.statusTargetUrl } : {}),
+          }).catch(() => undefined);
+        }
       }
     }
   }
@@ -309,23 +352,42 @@ export class CiDO {
   private async executeRunInner(req: CiRunRequest): Promise<void> {
     const mode = req.mode ?? "push";
 
-    // A queued push superseded by a newer push to the same branch is skipped
-    // before it costs a clone or a sandbox.
-    if (mode === "push" && req.ref) {
-      const latest = this.latestPushSha.get(branchOf(req.ref));
+    if (mode === "push" && req.ref && /^[0-9a-f]{40}$/.test(req.sha)) {
+      const branch = branchOf(req.ref);
+      // A queued push superseded by a newer push to the same branch is skipped
+      // before it costs a clone or a sandbox.
+      const latest = this.latestPushSha.get(branch);
       if (latest !== undefined && latest !== req.sha) {
         const rec = await this.begin(req, req.ref, req.sha, mode, []);
         await this.finish(rec, "skipped", `superseded by a newer push (${latest.slice(0, 8)})`);
         return;
       }
+      // Duplicate webhook delivery (GitHub auto-retry / manual redelivery):
+      // runs are serialized, so an earlier delivery for this exact branch+sha
+      // has already completed — don't run the whole pipeline (incl. deploys)
+      // again. A genuine new push carries a new sha and passes this check.
+      const done = (await this.history()).some(
+        (r) =>
+          r.mode === "push" &&
+          r.sha === req.sha &&
+          r.branch === branch &&
+          (r.status === "success" || r.status === "failed"),
+      );
+      if (done) {
+        const rec = await this.begin(req, req.ref, req.sha, mode, []);
+        await this.finish(rec, "skipped", `duplicate delivery for ${req.sha.slice(0, 8)} — already ran`);
+        return;
+      }
     }
 
-    // Clone the mirror to learn/verify what we're running.
-    const handle = await this.env.ARTIFACTS.get(req.artifactsRepoName);
+    // Clone the mirror to learn/verify what we're running. ARTIFACTS.get is
+    // inside the try so a transient namespace error still mints a failed
+    // record (never a vanished push with no trace).
     let shallow: ShallowRepo;
     let ref = req.ref;
     let sha = req.sha;
     try {
+      const handle = await this.env.ARTIFACTS.get(req.artifactsRepoName);
       if (mode === "push" && ref && /^[0-9a-f]{40}$/.test(sha)) {
         shallow = await cloneRepoAtRef(handle, req.remote, branchOf(ref), sha);
       } else {
@@ -374,20 +436,32 @@ export class CiDO {
       return;
     }
     if (!this.env.SANDBOX) {
-      // Config drift (e.g. hand-edited wrangler config): don't silently stop
-      // shipping — fail the run loudly AND let the v0.2 deploy path proceed.
+      // Config drift (e.g. hand-edited wrangler config): CI is enabled and a
+      // ci.yml is committed, but the Sandbox container isn't provisioned. Fail
+      // closed and loudly — we do NOT silently fall back to deploy.yml, since
+      // the ci.yml may gate deploys behind tests we can't run.
       const rec = await this.begin(req, ref, sha, mode, []);
       await this.finish(
         rec,
         "failed",
-        "SANDBOX binding missing — rerun `gitflare ci enable`; falling back to deploy.yml",
+        "SANDBOX container missing — rerun `gitflare ci enable` (its `[[containers]]` config is absent)",
       );
       await this.postStatus(rec, "error", "CI sandbox missing — rerun gitflare ci enable");
-      if (mode === "push") await this.delegatePlainDeploy(req);
       return;
     }
 
     await this.runPipeline(req, wf, ref, sha, mode);
+  }
+
+  /** True iff every run job in this job's transitive `needs` closure succeeded. */
+  private neededRunJobsSucceeded(
+    wf: CiWorkflow,
+    job: CiJob,
+    statusOf: (name: string) => CiJobRecord["status"],
+  ): boolean {
+    const runJobs = runJobsInNeedsClosure(wf, job.name);
+    // No run job in the closure → nothing was built for us to ship.
+    return runJobs.length > 0 && runJobs.every((n) => statusOf(n) === "success");
   }
 
   private async delegatePlainDeploy(req: CiRunRequest): Promise<void> {
@@ -441,8 +515,11 @@ export class CiDO {
     const statusOf = (name: string): CiJobRecord["status"] =>
       rec.jobs.find((j) => j.name === name)?.status ?? "pending";
 
+    let shippedDeploy = false;
     try {
       for (const job of wf.jobs) {
+        // The watchdog finalized this run out from under us — stop working.
+        if (this.finalizedRunIds.has(rec.id)) break;
         const jr = rec.jobs.find((j) => j.name === job.name)!;
 
         if (this.cancelRequested) {
@@ -463,9 +540,16 @@ export class CiDO {
         await this.record(rec);
         this.log(`[${job.name}] started (${job.kind} job)`);
 
+        // Only hand a deploy job the sandbox-built artifact when every run job
+        // it transitively `needs` actually succeeded — otherwise the workspace
+        // holds output from a job that FAILED after writing files, and shipping
+        // it would deploy a broken build. A deploy job with no run-job in its
+        // needs closure deploys the committed file (sandboxUsable = false).
+        const artifactsUsable =
+          sandboxCreated && cloneOk() && this.neededRunJobsSucceeded(wf, job, statusOf);
         const outcome =
           job.kind === "deploy"
-            ? await this.runDeployJob(req, job, rec, sandboxCreated && cloneOk())
+            ? await this.runDeployJob(req, job, rec, artifactsUsable)
             : await this.runSandboxJob(req, job, rec, branch, sha, {
                 ensureClone: async () => {
                   if (cloneState !== "pending") return cloneState === "ok";
@@ -490,6 +574,7 @@ export class CiDO {
         jr.status = outcome.ok ? "success" : "failed";
         if (outcome.message) jr.message = outcome.message;
         jr.steps = outcome.steps;
+        if (job.kind === "deploy" && outcome.ok) shippedDeploy = true;
         if (!outcome.ok && !failedJob) failedJob = job.name;
         this.log(`[${job.name}] ${outcome.ok ? "✓ success" : `✗ failed${outcome.message ? ` — ${outcome.message}` : ""}`}`);
         await this.record(rec);
@@ -503,8 +588,13 @@ export class CiDO {
     }
 
     if (this.cancelRequested) {
-      await this.finish(rec, "failed", "cancelled");
-      await this.postStatus(rec, "failure", "run cancelled");
+      // A delegated deploy that already returned success has shipped — cancel
+      // can't unship it (it ran in a separate DO). Be honest about that.
+      const note = shippedDeploy
+        ? "cancelled — note: a deploy job had already shipped; roll back from the deployments page if needed"
+        : "cancelled";
+      await this.finish(rec, "failed", note);
+      await this.postStatus(rec, "failure", note);
       return;
     }
     const anyFailed = rec.jobs.some((j) => j.status === "failed");
@@ -596,28 +686,13 @@ export class CiDO {
       return { ok: false, steps: [], message: `deploy delegation failed: ${(e as Error).message}` };
     }
 
-    if (!resp.ok) {
-      const body = (await resp.json().catch(() => ({}))) as { error?: string };
-      return { ok: false, steps: [], message: `deploy failed: ${body.error ?? resp.status}` };
+    const body = await resp.json().catch(() => ({}));
+    const outcome = interpretDeployResponse(resp.ok, resp.status, body);
+    if (resp.ok) {
+      const record = body as DeployRecord;
+      this.log(`[${job.name}] deploy #${record.id} ${record.status} — see the deployments page for logs`);
     }
-    const record = (await resp.json()) as DeployRecord;
-    const steps = record.steps.map((s) => ({
-      label: `${s.kind}: ${s.project}`,
-      ok: s.ok,
-      ...(s.detail ? { detail: s.detail } : {}),
-    }));
-    this.log(`[${job.name}] deploy #${record.id} ${record.status} — see the deployments page for logs`);
-    if (record.status === "success") return { ok: true, steps };
-    // "skipped" (e.g. CD not enabled) must NOT read as green — the whole point
-    // of a needs-gated deploy job is that it actually shipped.
-    return {
-      ok: false,
-      steps,
-      message:
-        record.status === "skipped"
-          ? `deploy skipped: ${record.message ?? "CD not enabled — run \`gitflare deploy enable\`"}`
-          : `deploy #${record.id} ${record.status}${record.message ? `: ${record.message}` : ""}`,
-    };
+    return outcome;
   }
 }
 

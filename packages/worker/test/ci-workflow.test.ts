@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { parseCiWorkflow, ciMatchesPush, deployStepsOf, deployJobsOf } from "../src/ci/workflow";
+import {
+  parseCiWorkflow,
+  ciMatchesPush,
+  deployStepsOf,
+  deployJobsOf,
+  runJobsInNeedsClosure,
+} from "../src/ci/workflow";
 
 const CANONICAL = `
 on: push
@@ -256,5 +262,39 @@ describe("deployStepsOf", () => {
     const runOnly = parseCiWorkflow("on: push\njobs:\n  a:\n    steps:\n      - run: x\n").workflow!;
     expect(deployStepsOf(runOnly).error).toMatch(/no cloudflare\/deploy steps/);
     expect(deployJobsOf(runOnly)).toEqual([]);
+  });
+});
+
+describe("runJobsInNeedsClosure — gates artifact handover on the builder succeeding", () => {
+  const wf = parseCiWorkflow(`
+on: push
+jobs:
+  lint:
+    steps:
+      - run: npm run lint
+  build:
+    needs: [lint]
+    steps:
+      - run: npm run build
+  deploy:
+    needs: [build]
+    steps:
+      - cloudflare/deploy: { project: p, entry: dist/w.js }
+  deploy_nobuild:
+    steps:
+      - cloudflare/deploy: { project: p2, entry: committed.js }
+`).workflow!;
+
+  it("returns all transitively-needed run jobs", () => {
+    expect(new Set(runJobsInNeedsClosure(wf, "deploy"))).toEqual(new Set(["build", "lint"]));
+  });
+
+  it("returns empty for a deploy job with no needs (ships the committed file)", () => {
+    expect(runJobsInNeedsClosure(wf, "deploy_nobuild")).toEqual([]);
+  });
+
+  it("returns empty for a run job with no needs and for unknown jobs", () => {
+    expect(runJobsInNeedsClosure(wf, "lint")).toEqual([]);
+    expect(runJobsInNeedsClosure(wf, "ghost")).toEqual([]);
   });
 });

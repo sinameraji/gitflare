@@ -91,10 +91,15 @@ describe("validateCloneInputs", () => {
     expect(validateCloneInputs({ remote: REMOTE, branch: "$(id)", sha: SHA })).toMatch(/invalid branch/);
     expect(validateCloneInputs({ remote: REMOTE, branch: "-upload-pack=x", sha: SHA })).toMatch(/invalid branch/);
   });
-  it("rejects remotes with quotes/spaces or non-https scheme", () => {
+  it("rejects non-https schemes and any shell-active character", () => {
     expect(validateCloneInputs({ remote: "http://x/y.git", branch: "main", sha: SHA })).toMatch(/invalid remote/);
     expect(validateCloneInputs({ remote: "https://x/`id`.git", branch: "main", sha: SHA })).toMatch(/invalid remote/);
     expect(validateCloneInputs({ remote: "https://x/a b.git", branch: "main", sha: SHA })).toMatch(/invalid remote/);
+    // Command-substitution chars must be rejected even without quotes/spaces —
+    // the remote is interpolated unquoted into the git clone command line.
+    expect(validateCloneInputs({ remote: "https://host/$(reboot).git", branch: "main", sha: SHA })).toMatch(/invalid remote/);
+    expect(validateCloneInputs({ remote: "https://host/a;b.git", branch: "main", sha: SHA })).toMatch(/invalid remote/);
+    expect(validateCloneInputs({ remote: "https://host/a&b.git", branch: "main", sha: SHA })).toMatch(/invalid remote/);
   });
 });
 

@@ -292,6 +292,7 @@ app.get("/r/:name/ci", async (c) => {
       artifactsRepoName={name}
       runs={runs}
       ciEnabled={c.env.CI_ENABLED === "1"}
+      canCancel={!!c.env.ACCESS_AUD}
       version={c.env.GITFLARE_VERSION ?? "0.0.0"}
     />,
   );
@@ -307,12 +308,22 @@ app.get("/r/:name/ci/stream", async (c) => {
   return stub.fetch(new Request("https://ci-do/stream", c.req.raw));
 });
 
-// Cancel button on the runs page. POST from the page itself, so the Access
-// guard (when enabled) already authenticated the human clicking it.
+// Cancel button on the runs page. This is a state-changing action, so it must
+// only be reachable by an authenticated principal. The Access guard on /r/*
+// authenticates the human ONLY when Access is enabled; on a public mirror it
+// no-ops, which would let anyone kill in-flight runs. So we refuse the
+// page-initiated cancel when Access is off and point users at the
+// CONTROL_SECRET-gated CLI (`gitflare ci cancel`) instead.
 app.post("/r/:name/ci/cancel", async (c) => {
   const name = c.req.param("name");
   const repo = findRepoByArtifactsName(c.env, name);
   if (!repo) return c.json({ error: "unknown repo" }, 404);
+  if (!c.env.ACCESS_AUD) {
+    return c.json(
+      { error: "cancel from the dashboard requires Cloudflare Access; use `gitflare ci cancel`" },
+      403,
+    );
+  }
   const stub = ciStubFor(c.env, name);
   const resp = await stub.fetch("https://ci-do/cancel", { method: "POST" });
   return c.json((await resp.json()) as object, resp.status === 202 ? 202 : 200);
@@ -454,6 +465,13 @@ app.post("/webhooks/github", async (c) => {
 
     if (payload.deleted) {
       return c.json({ accepted: true, skipped: "branch-delete" }, 202);
+    }
+
+    // Only branch pushes drive sync + CD/CI. Tag pushes (refs/tags/*) and other
+    // non-branch refs would otherwise mint failed CI runs and red commit
+    // statuses (branchOf() leaves them unmatched by any workflow branch list).
+    if (!payload.ref.startsWith("refs/heads/")) {
+      return c.json({ accepted: true, skipped: "non-branch-ref" }, 202);
     }
 
     const entry = lookupArtifactsRepoEntry(

@@ -53,7 +53,12 @@ export function validateCloneInputs(p: {
   if (!/^[A-Za-z0-9._/-]+$/.test(p.branch) || p.branch.startsWith("-")) {
     return `invalid branch name "${p.branch.slice(0, 60)}"`;
   }
-  if (!/^https:\/\/[A-Za-z0-9._~:/?#@!$&'()*+,;=%[\]-]+$/.test(p.remote) || /["'`\\\s]/.test(p.remote)) {
+  // The remote is interpolated (unquoted) into a shell `git clone` command, so
+  // the allowlist is deliberately tight — an Artifacts mirror URL only ever
+  // needs alphanumerics, `.-_~%`, `/`, and `:`. Shell-active characters
+  // ($ ( ) ; & ' " ` \ space | < > etc.) are NOT in the set, so no crafted
+  // REPO_MAP remote can smuggle command substitution through this boundary.
+  if (!/^https:\/\/[A-Za-z0-9._~%:/-]+$/.test(p.remote)) {
     return `invalid remote URL`;
   }
   return null;

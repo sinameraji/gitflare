@@ -72,8 +72,6 @@ export async function runCiEnable(
   // must never strand the other's.
   const controlSecret =
     entry.deploy?.controlSecret ?? entry.ci?.controlSecret ?? randomHex(32);
-  const freshControlSecret =
-    !entry.deploy?.controlSecret && !entry.ci?.controlSecret;
 
   // Set before redeploy — redeployWorker reads entry.ci to emit the SANDBOX
   // binding, containers block, and CI_ENABLED var.
@@ -86,16 +84,35 @@ export async function runCiEnable(
 
   const sp = p.spinner();
   sp.start("Redeploying Worker with CI enabled");
+  let redeployed = false;
   try {
     const res = await redeployWorker(entry, cfToken, remote);
-    if (freshControlSecret) {
-      sp.message("Setting control secret");
-      await wranglerSecret(res.workDir, cfToken, "CONTROL_SECRET", controlSecret);
-    }
+    redeployed = true;
+    // The Worker is now live with CI_ENABLED + the containers block — persist
+    // that BEFORE the secret step so a secret failure can't leave the Worker
+    // enabled while local config still says disabled (which would make
+    // `gitflare ci disable` refuse to turn it back off).
+    cfg.cloudflare = { token: cfToken };
+    await saveConfig(cfg);
+    sp.message("Setting control secret");
+    // Always (re)write CONTROL_SECRET — idempotent, and it re-establishes the
+    // secret if the Worker was recreated (dashboard delete + re-provision).
+    await wranglerSecret(res.workDir, cfToken, "CONTROL_SECRET", controlSecret);
     sp.stop("Worker redeployed with CI enabled");
   } catch (e) {
-    sp.stop("Redeploy failed");
     const msg = (e as Error).message;
+    if (redeployed) {
+      // Redeploy succeeded; only the secret step failed. Config is already
+      // saved (CI is genuinely live), so tell the user how to finish.
+      sp.stop("CI is live, but setting the control secret failed");
+      p.log.warn(
+        "`gitflare ci run/list/cancel` will 401 until the control secret is set. " +
+          "Re-run `gitflare ci enable` to retry (your config is already saved).",
+      );
+      p.log.error(msg);
+      return;
+    }
+    sp.stop("Redeploy failed");
     if (/container|plan|payment|not.?entitled|unauthorized|permission|10403|CODE.?100/i.test(msg)) {
       p.log.error(
         [
@@ -110,12 +127,9 @@ export async function runCiEnable(
     } else {
       p.log.error(msg);
     }
-    // Config must only persist on success; the in-memory entry.ci is discarded.
+    // Redeploy never happened; the in-memory entry.ci is discarded (not saved).
     return;
   }
-
-  cfg.cloudflare = { token: cfToken };
-  await saveConfig(cfg);
 
   p.outro(
     [

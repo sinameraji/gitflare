@@ -8,6 +8,9 @@ interface Props {
   artifactsRepoName: string;
   runs: CiRunRecord[];
   ciEnabled: boolean;
+  // Cancel from the dashboard is only offered when Cloudflare Access gates the
+  // page (otherwise anyone could kill runs on a public mirror — use the CLI).
+  canCancel: boolean;
   version: string;
 }
 
@@ -111,13 +114,15 @@ export const Runs: FC<Props> = (p) => (
           <div id="live-wrap" style="display: none; margin-top: 24px;">
             <div style="display: flex; align-items: center; justify-content: space-between;">
               <h2>Live</h2>
-              <button
-                id="cancel-run"
-                class="mono"
-                style="background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 4px 10px; cursor: pointer; font-size: 12px;"
-              >
-                cancel run
-              </button>
+              {p.canCancel ? (
+                <button
+                  id="cancel-run"
+                  class="mono"
+                  style="background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 4px 10px; cursor: pointer; font-size: 12px;"
+                >
+                  cancel run
+                </button>
+              ) : null}
             </div>
             <pre
               id="live-logs"
