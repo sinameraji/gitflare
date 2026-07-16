@@ -83,15 +83,25 @@ export async function runDeployEnable(repoArg: string | undefined): Promise<void
   if (!remote) return;
 
   // Mark CD on so redeploy emits CD_ENABLED + the DeployDO binding/migration,
-  // then set the deploy-token + control-plane secrets.
-  const controlSecret = randomHex(32);
+  // then set the deploy-token + control-plane secrets. The control secret is
+  // shared with CI (one CONTROL_SECRET on the Worker), so reuse whichever
+  // copy already exists — enabling one feature must never strand the other's.
+  const controlSecret =
+    entry.deploy?.controlSecret ?? entry.ci?.controlSecret ?? randomHex(32);
+  const freshControlSecret =
+    !entry.deploy?.controlSecret && !entry.ci?.controlSecret;
   entry.deploy = { enabledAt: new Date().toISOString(), controlSecret };
+  if (entry.ci && entry.ci.controlSecret !== controlSecret) {
+    entry.ci.controlSecret = controlSecret;
+  }
   sp.start("Redeploying Worker with CD enabled");
   try {
     const res = await redeployWorker(entry, cfToken, remote);
     sp.message("Setting deploy secrets");
     await wranglerSecret(res.workDir, cfToken, "CF_DEPLOY_TOKEN", deployToken);
-    await wranglerSecret(res.workDir, cfToken, "CONTROL_SECRET", controlSecret);
+    if (freshControlSecret) {
+      await wranglerSecret(res.workDir, cfToken, "CONTROL_SECRET", controlSecret);
+    }
     sp.stop("Worker redeployed with CD enabled");
   } catch (e) {
     sp.stop("Redeploy failed");

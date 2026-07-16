@@ -26,5 +26,8 @@ export async function redeployWorker(
       ? { accessAud: entry.access.aud, accessTeamDomain: entry.access.teamDomain }
       : {}),
     ...(entry.deploy ? { cdEnabled: true } : {}),
+    ...(entry.ci
+      ? { ci: { provisioned: true, enabled: entry.ci.enabled, instanceType: entry.ci.instanceType } }
+      : {}),
   });
 }

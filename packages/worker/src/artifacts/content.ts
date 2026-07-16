@@ -261,6 +261,72 @@ export async function readBlobAtCommit(
 }
 
 /**
+ * Mint a short-TTL read token and return the git basic-auth password. Also
+ * used by the CI DO to hand a sandbox a token for cloning the mirror.
+ */
+export async function mintReadPassword(repo: ArtifactsRepo, ttlSeconds: number): Promise<string> {
+  const tokenResult = (await repo.createToken("read", ttlSeconds)) as {
+    plaintext?: string;
+    token?: string;
+  };
+  const rawToken = tokenResult.plaintext ?? tokenResult.token;
+  if (!rawToken) throw new Error("createToken returned no token");
+  return tokenSecret(rawToken);
+}
+
+/**
+ * Clone a specific branch and make a specific commit readable, deepening as
+ * needed (a push can race HEAD past a fixed depth, and feature branches aren't
+ * covered by the default-branch clone helpers at all). Used by the v0.3 CI
+ * path so workflow + entry files are read strictly AT the delegated sha —
+ * never at whatever HEAD happens to be by the time we clone.
+ */
+export async function cloneRepoAtRef(
+  repo: ArtifactsRepo,
+  remote: string,
+  branch: string,
+  sha: string,
+): Promise<ShallowRepo> {
+  const password = await mintReadPassword(repo, 180);
+  const fs = new MemFs();
+  const dir = "/repo";
+  const onAuth = (): { username: string; password: string } => ({ username: "x", password });
+
+  await git.clone({
+    fs,
+    http,
+    dir,
+    url: remote,
+    ref: branch,
+    singleBranch: true,
+    depth: 50,
+    noCheckout: true,
+    noTags: true,
+    onAuth,
+  });
+
+  const hasCommit = async (): Promise<boolean> => {
+    try {
+      await git.readCommit({ fs, dir, oid: sha });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (!(await hasCommit())) {
+    for (const depth of [500, 100000]) {
+      await git.fetch({ fs, http, dir, url: remote, ref: branch, depth, singleBranch: true, onAuth });
+      if (await hasCommit()) break;
+    }
+    if (!(await hasCommit())) {
+      throw new Error(`commit ${sha.slice(0, 8)} not reachable on ${branch}`);
+    }
+  }
+  return { fs, dir, headSha: sha, branchName: branch };
+}
+
+/**
  * Full clone (no depth limit) of the default branch, so any historical commit
  * is reachable. Heavier than cloneRepoShallow — used only for rollback.
  */

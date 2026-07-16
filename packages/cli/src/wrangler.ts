@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const requireFromHere = createRequire(import.meta.url);
 
+// The sandbox container image the CI feature runs jobs in. The tag must match
+// the worker's @cloudflare/sandbox dependency version.
+const SANDBOX_IMAGE = "docker.io/cloudflare/sandbox:0.12.3";
+
 export interface RepoMapEntry {
   name: string;
   remote: string;
@@ -25,6 +29,9 @@ export interface DeployParams {
   accessTeamDomain?: string;
   // Continuous deploy (set by `gitflare deploy enable`). Emits CD_ENABLED="1".
   cdEnabled?: boolean;
+  // CI on Cloudflare Sandboxes (set by `gitflare ci enable`). `provisioned`
+  // emits the SANDBOX binding + containers block; `enabled` emits CI_ENABLED.
+  ci?: { provisioned: boolean; enabled: boolean; instanceType: string };
 }
 
 export interface DeployResult {
@@ -90,10 +97,33 @@ ACCESS_TEAM_DOMAIN = ${JSON.stringify(p.accessTeamDomain)}
     out += `CD_ENABLED = "1"
 `;
   }
+  if (p.ci?.enabled) {
+    out += `CI_ENABLED = "1"
+`;
+  }
   return out;
 }
 
 function tomlFor(main: string, p: DeployParams, version: string): string {
+  // The SANDBOX binding + containers block are only emitted once CI has been
+  // provisioned (paid-plan Containers). The v3/v4 migrations below are always
+  // emitted regardless.
+  const sandbox = p.ci?.provisioned
+    ? `[[durable_objects.bindings]]
+name = "SANDBOX"
+class_name = "Sandbox"
+
+[[containers]]
+class_name = "Sandbox"
+image = "${SANDBOX_IMAGE}"
+instance_type = "${p.ci.instanceType}"
+max_instances = 5
+
+`
+    : "";
+  // v3/v4 are unconditional ON PURPOSE: migrations are free-plan-safe, and
+  // gating them on local config would hard-fail redeploys from a second
+  // machine once they've been applied remotely.
   return `name = "${p.workerName}"
 main = "${main}"
 compatibility_date = "2026-05-01"
@@ -112,13 +142,25 @@ class_name = "RepoDO"
 name = "DEPLOY"
 class_name = "DeployDO"
 
-[[migrations]]
+[[durable_objects.bindings]]
+name = "CI"
+class_name = "CiDO"
+
+${sandbox}[[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RepoDO"]
 
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["DeployDO"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["CiDO"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["Sandbox"]
 
 ${varsBlock(p, version)}`;
 }

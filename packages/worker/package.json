@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cloudflare/sandbox": "0.12.3",
     "@gitflare/shared": "workspace:*",
     "highlight.js": "^11.11.1",
     "hono": "^4.6.0",

@@ -1,21 +1,29 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { LOGO_PNG_DATA_URL } from "./logo-data";
-import type { DeployRecord } from "../durable-objects/deploy";
+import type { CiRunRecord } from "../durable-objects/ci";
 
 interface Props {
   githubFullName: string;
   artifactsRepoName: string;
-  deploys: DeployRecord[];
-  cdEnabled: boolean;
+  runs: CiRunRecord[];
+  ciEnabled: boolean;
   version: string;
 }
 
-const PILL: Record<DeployRecord["status"], string> = {
+const PILL: Record<CiRunRecord["status"], string> = {
   success: "ok",
   failed: "err",
   running: "warn",
   skipped: "warn",
+};
+
+const JOB_GLYPH: Record<string, string> = {
+  success: "✓",
+  failed: "✗",
+  skipped: "○",
+  running: "●",
+  pending: "·",
 };
 
 function rel(ts: number): string {
@@ -26,25 +34,33 @@ function rel(ts: number): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
-// Client-side: stream live deploy logs over a WebSocket and reload the page
-// when a run finishes so the history table refreshes.
+function dur(r: CiRunRecord): string {
+  if (!r.finishedAt) return "…";
+  const s = Math.round((r.finishedAt - r.startedAt) / 1000);
+  if (s < 90) return `${s}s`;
+  return `${Math.round(s / 60)}m`;
+}
+
+// Client-side: stream live CI logs over a WebSocket, offer cancel, and reload
+// when the run finishes so the history table refreshes.
 function streamScript(name: string): string {
   return `
 (function () {
   var box = document.getElementById('live-logs');
   if (!box || !('WebSocket' in window)) return;
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  var ws = new WebSocket(proto + '//' + location.host + '/r/${name}/deployments/stream');
+  var ws = new WebSocket(proto + '//' + location.host + '/r/${name}/ci/stream');
+  function show() { document.getElementById('live-wrap').style.display = 'block'; }
   function append(line) {
     box.textContent += line + '\\n';
     box.scrollTop = box.scrollHeight;
-    document.getElementById('live-wrap').style.display = 'block';
+    show();
   }
   ws.onmessage = function (ev) {
     try {
       var m = JSON.parse(ev.data);
       if (m.type === 'snapshot' || m.type === 'start') {
-        if (m.record && m.record.logs) { box.textContent = m.record.logs.join('\\n') + '\\n'; document.getElementById('live-wrap').style.display = 'block'; }
+        if (m.record && m.record.logs) { box.textContent = m.record.logs.join('\\n') + '\\n'; show(); }
       } else if (m.type === 'log') {
         append(m.line);
       } else if (m.type === 'done') {
@@ -53,12 +69,17 @@ function streamScript(name: string): string {
       }
     } catch (e) {}
   };
+  var btn = document.getElementById('cancel-run');
+  if (btn) btn.addEventListener('click', function () {
+    btn.disabled = true;
+    fetch('/r/${name}/ci/cancel', { method: 'POST' }).catch(function () {});
+  });
 })();
 `;
 }
 
-export const Deployments: FC<Props> = (p) => (
-  <Layout title={`Deployments · ${p.githubFullName}`}>
+export const Runs: FC<Props> = (p) => (
+  <Layout title={`CI runs · ${p.githubFullName}`}>
     <div class="wrap">
       <div class="hdr">
         <div class="brand">
@@ -70,25 +91,34 @@ export const Deployments: FC<Props> = (p) => (
         <div class="ver mono">v{p.version}</div>
       </div>
 
-      <h1>Deployments</h1>
+      <h1>CI runs</h1>
       <p class="muted">
         {p.githubFullName} · <a href={`/r/${p.artifactsRepoName}/tree/`}>browse code</a> ·{" "}
-        <a href={`/r/${p.artifactsRepoName}/ci`}>CI runs</a>
+        <a href={`/r/${p.artifactsRepoName}/deployments`}>deployments</a>
       </p>
 
-      {!p.cdEnabled ? (
+      {!p.ciEnabled ? (
         <div class="empty" style="margin-top: 24px; text-align: left;">
-          <div style="margin-bottom: 12px;">Continuous deploy isn't enabled for this repo.</div>
-          <pre style="margin: 0 0 12px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto;"><code class="mono">gitflare deploy enable</code></pre>
+          <div style="margin-bottom: 12px;">CI isn't enabled for this repo.</div>
+          <pre style="margin: 0 0 12px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto;"><code class="mono">gitflare ci enable</code></pre>
           <div class="muted">
-            Then commit a <code>.gitflare/deploy.yml</code>. On push, GitFlare deploys to your own
-            account — even when GitHub Actions is down.
+            Then commit a <code>.gitflare/ci.yml</code>. On push, GitFlare runs your jobs in a
+            Cloudflare Sandbox on your own account — even when GitHub Actions is down.
           </div>
         </div>
       ) : (
         <>
           <div id="live-wrap" style="display: none; margin-top: 24px;">
-            <h2>Live</h2>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <h2>Live</h2>
+              <button
+                id="cancel-run"
+                class="mono"
+                style="background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--fg); padding: 4px 10px; cursor: pointer; font-size: 12px;"
+              >
+                cancel run
+              </button>
+            </div>
             <pre
               id="live-logs"
               class="mono"
@@ -96,10 +126,10 @@ export const Deployments: FC<Props> = (p) => (
             ></pre>
           </div>
 
-          {p.deploys.length === 0 ? (
+          {p.runs.length === 0 ? (
             <div class="empty" style="margin-top: 24px;">
-              No deploys yet. Push to a branch matched by <code>.gitflare/deploy.yml</code>, or run{" "}
-              <code>gitflare deploy run</code>.
+              No runs yet. Push to a branch matched by <code>.gitflare/ci.yml</code>, or run{" "}
+              <code>gitflare ci run</code>.
             </div>
           ) : (
             <div class="card" style="padding: 0; overflow: hidden; margin-top: 24px;">
@@ -110,39 +140,36 @@ export const Deployments: FC<Props> = (p) => (
                     <th>Branch</th>
                     <th>Commit</th>
                     <th>Mode</th>
-                    <th>Steps</th>
+                    <th>Jobs</th>
                     <th>Status</th>
+                    <th style="text-align: right;">Took</th>
                     <th style="text-align: right;">When</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {p.deploys.map((d) => (
+                  {p.runs.map((r) => (
                     <tr>
-                      <td class="mono muted">{d.id}</td>
-                      <td class="mono">{d.branch}</td>
-                      <td class="mono">{d.sha.slice(0, 8)}</td>
-                      <td class="mono muted">{d.mode}</td>
+                      <td class="mono muted">{r.id}</td>
+                      <td class="mono">{r.branch}</td>
+                      <td class="mono">{r.sha.slice(0, 8)}</td>
+                      <td class="mono muted">{r.mode}</td>
                       <td class="mono">
-                        {d.steps.length === 0
+                        {r.jobs.length === 0
                           ? "—"
-                          : d.steps.map((s) => (
-                              <span>
-                                {s.url ? (
-                                  <a href={s.url}>{s.project}</a>
-                                ) : (
-                                  s.project
-                                )}
-                                {s.ok ? " ✓ " : " ✗ "}
+                          : r.jobs.map((j) => (
+                              <span title={j.message ?? j.status} style="margin-right: 8px;">
+                                {j.name} {JOB_GLYPH[j.status] ?? "?"}
                               </span>
                             ))}
                       </td>
                       <td>
-                        <span class={`pill ${PILL[d.status]}`}>{d.status}</span>
-                        {d.message ? (
-                          <span style="color: var(--muted); margin-left: 8px;">{d.message}</span>
+                        <span class={`pill ${PILL[r.status]}`}>{r.status}</span>
+                        {r.message ? (
+                          <span style="color: var(--muted); margin-left: 8px;">{r.message}</span>
                         ) : null}
                       </td>
-                      <td class="mono" style="text-align: right; color: var(--muted);">{rel(d.startedAt)}</td>
+                      <td class="mono" style="text-align: right; color: var(--muted);">{dur(r)}</td>
+                      <td class="mono" style="text-align: right; color: var(--muted);">{rel(r.startedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -150,14 +177,14 @@ export const Deployments: FC<Props> = (p) => (
             </div>
           )}
 
-          {p.deploys[0] && p.deploys[0].logs.length > 0 ? (
+          {p.runs[0] && p.runs[0].logs.length > 0 ? (
             <>
-              <h2>Latest log (#{p.deploys[0].id})</h2>
+              <h2>Latest log (#{p.runs[0].id})</h2>
               <pre
                 class="mono"
                 style="margin: 0; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; max-height: 320px; overflow: auto; font-size: 12px; line-height: 1.5;"
               >
-                {p.deploys[0].logs.join("\n")}
+                {p.runs[0].logs.join("\n")}
               </pre>
             </>
           ) : null}

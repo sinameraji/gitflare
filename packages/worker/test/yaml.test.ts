@@ -59,3 +59,52 @@ steps:
     expect(v.color).toBe("#F38020");
   });
 });
+
+describe("parseYaml block scalars", () => {
+  it("parses `key: |` with a trailing newline kept", () => {
+    const v = parseYaml(`
+script: |
+  npm ci
+  npm test
+after: done
+`) as Record<string, unknown>;
+    expect(v.script).toBe("npm ci\nnpm test\n");
+    expect(v.after).toBe("done");
+  });
+
+  it("parses `key: |-` chomping trailing newlines", () => {
+    const v = parseYaml(`script: |-\n  echo hi\n\n\nafter: 1\n`) as Record<string, unknown>;
+    expect(v.script).toBe("echo hi");
+    expect(v.after).toBe(1);
+  });
+
+  it("works on list-item maps (`- run: |`) and stops at sibling keys", () => {
+    const v = parseYaml(`
+steps:
+  - run: |
+      npm ci
+      npm test
+    name: tests
+  - run: echo ok
+`) as { steps: Array<Record<string, unknown>> };
+    expect(v.steps[0]!.run).toBe("npm ci\nnpm test\n");
+    expect(v.steps[0]!.name).toBe("tests");
+    expect(v.steps[1]!.run).toBe("echo ok");
+  });
+
+  it("preserves inner indentation, blank lines, and # characters verbatim", () => {
+    const v = parseYaml(`
+script: |
+  if true; then
+    echo "#not a comment"
+  fi
+
+  echo after-blank
+`) as Record<string, unknown>;
+    expect(v.script).toBe('if true; then\n  echo "#not a comment"\nfi\n\necho after-blank\n');
+  });
+
+  it("rejects folded scalars with a hint", () => {
+    expect(() => parseYaml("script: >\n  a\n  b\n")).toThrow(/folded.*use \|/);
+  });
+});

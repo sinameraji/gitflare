@@ -35,10 +35,19 @@ export interface Env {
   ACCESS_AUD?: string;
   ACCESS_TEAM_DOMAIN?: string; // e.g. "myteam.cloudflareaccess.com"
 
+  // "1" when `gitflare ci enable` is active (v0.3). Gates the CI pipeline the
+  // same way CD_ENABLED gates deploys; `ci disable` drops the var but keeps
+  // the Sandbox container provisioned so re-enable never needs a migration.
+  CI_ENABLED?: string;
+
   // Bindings
   ARTIFACTS: ArtifactsNamespace;
   REPO: DurableObjectNamespace;
   DEPLOY: DurableObjectNamespace;
+  CI: DurableObjectNamespace;
+  // The Cloudflare Sandbox container namespace — present only after
+  // `gitflare ci enable` adds the [[containers]] block to the Worker config.
+  SANDBOX?: DurableObjectNamespace;
 }
 
 export function parseRepoMap(env: Env): RepoMap {

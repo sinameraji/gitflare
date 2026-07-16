@@ -2,6 +2,7 @@ import type { Env } from "../env";
 import {
   cloneRepoShallow,
   cloneRepoFull,
+  cloneRepoAtRef,
   readBlobAtCommit,
   listFilesUnder,
 } from "../artifacts/content";
@@ -12,6 +13,7 @@ import {
   type DeployStep,
   type DeployWorkflow,
 } from "../deploy/workflow";
+import { parseCiWorkflow, deployStepsOf, CI_WORKFLOW_PATH } from "../ci/workflow";
 import {
   uploadWorkerScript,
   deployPages,
@@ -34,13 +36,18 @@ export interface DeployRecord {
   ref: string;
   branch: string;
   sha: string;
-  mode: "push" | "manual" | "rollback";
+  mode: "push" | "manual" | "rollback" | "ci";
   startedAt: number;
   finishedAt?: number;
   status: "running" | "success" | "failed" | "skipped";
   steps: DeployStepResult[];
   logs: string[];
   message?: string;
+  // v0.3: which workflow file/job produced this deploy, so rollback re-reads
+  // the right steps at the target sha. Absent = the v0.2 deploy.yml path
+  // (all pre-v0.3 records). job absent with workflow set = all deploy jobs.
+  workflow?: string;
+  job?: string;
 }
 
 interface DeployRequest {
@@ -48,7 +55,13 @@ interface DeployRequest {
   remote: string;
   ref: string;
   sha: string;
-  mode?: "push" | "manual";
+  mode?: "push" | "manual" | "ci";
+  // mode "ci" only: the CI pipeline names the workflow file + deploy job it is
+  // delegating, and may override entry files with sandbox-built artifacts so
+  // the deploy ships what CI just built instead of a stale committed file.
+  workflow?: string;
+  job?: string;
+  entryOverrides?: Record<string, string>;
 }
 
 interface RollbackRequest {
@@ -173,6 +186,7 @@ export class DeployDO {
     ref: string,
     sha: string,
     mode: DeployRecord["mode"],
+    source?: { workflow?: string; job?: string },
   ): Promise<DeployRecord> {
     const id = await this.nextId();
     const rec: DeployRecord = {
@@ -185,6 +199,8 @@ export class DeployDO {
       status: "running",
       steps: [],
       logs: [],
+      ...(source?.workflow ? { workflow: source.workflow } : {}),
+      ...(source?.job ? { job: source.job } : {}),
     };
     this.current = rec;
     await this.record(rec);
@@ -226,10 +242,33 @@ export class DeployDO {
     return parsed.workflow;
   }
 
-  // -- push / manual deploy -------------------------------------------------
+  /** Read `.gitflare/ci.yml` at a commit and extract deploy steps (v0.3). */
+  private async loadCiDeploySteps(
+    shallow: ShallowRepo,
+    commitOid: string,
+    job?: string,
+  ): Promise<{ steps: DeployStep[] } | { error: string }> {
+    const blob = await readBlobAtCommit(shallow, commitOid, CI_WORKFLOW_PATH).catch(() => null);
+    if (!blob || blob.isBinary || !blob.text) return { error: `no ${CI_WORKFLOW_PATH}` };
+    const parsed = parseCiWorkflow(blob.text);
+    if (parsed.error || !parsed.workflow)
+      return { error: `invalid ${CI_WORKFLOW_PATH}: ${parsed.error}` };
+    const extracted = deployStepsOf(parsed.workflow, job);
+    if (extracted.error || !extracted.steps) return { error: extracted.error ?? "no deploy steps" };
+    return { steps: extracted.steps };
+  }
+
+  /** Does `.gitflare/ci.yml` exist at this commit (any validity)? */
+  private async ciFileExists(shallow: ShallowRepo, commitOid: string): Promise<boolean> {
+    const blob = await readBlobAtCommit(shallow, commitOid, CI_WORKFLOW_PATH).catch(() => null);
+    return !!blob && !blob.isBinary && !!blob.text;
+  }
+
+  // -- push / manual / CI-delegated deploy ------------------------------------
 
   private async runDeploy(req: DeployRequest): Promise<DeployRecord> {
     const mode = req.mode ?? "push";
+    if (mode === "ci") return this.runCiDelegatedDeploy(req);
 
     // Clone first so a manual run (empty ref/sha — the GitHub-down escape hatch)
     // can learn the current default branch + tip from Artifacts directly.
@@ -243,6 +282,36 @@ export class DeployDO {
 
     const ref = req.ref || `refs/heads/${shallow.branchName}`;
     const sha = req.sha || shallow.headSha;
+
+    // v0.3: when a ci.yml is committed, the CI pipeline owns pushes. Fail
+    // CLOSED rather than run deploy.yml ungated — the user added `needs:`
+    // gating on purpose, and deploying around it would ship untested code.
+    if (mode === "push" && (await this.ciFileExists(shallow, shallow.headSha))) {
+      const rec = await this.begin(ref, sha, mode);
+      return this.finish(
+        rec,
+        "skipped",
+        this.env.CI_ENABLED === "1"
+          ? `${CI_WORKFLOW_PATH} owns this push — the CI pipeline deploys (see the CI runs page)`
+          : `${CI_WORKFLOW_PATH} present but CI not enabled — run \`gitflare ci enable\` (deploy.yml is not run ungated)`,
+      );
+    }
+
+    // v0.3: a manual "deploy now" prefers ci.yml's deploy jobs when CI is
+    // enabled and ci.yml actually has deploy jobs — the GitHub-down escape
+    // hatch deploys immediately, intentionally skipping test jobs.
+    if (mode === "manual" && this.env.CI_ENABLED === "1") {
+      const ci = await this.loadCiDeploySteps(shallow, shallow.headSha);
+      if ("steps" in ci) {
+        const rec = await this.begin(ref, sha, mode, { workflow: CI_WORKFLOW_PATH });
+        const creds = this.creds();
+        if (!creds) return this.finish(rec, "skipped", "CD not enabled — run `gitflare deploy enable`");
+        this.log(`manual deploy from ${CI_WORKFLOW_PATH} deploy jobs (test jobs intentionally skipped)`);
+        const anyFailed = await this.runSteps(rec, ci.steps, shallow, shallow.headSha, creds, rec.branch);
+        return this.finish(rec, anyFailed ? "failed" : "success");
+      }
+    }
+
     const rec = await this.begin(ref, sha, mode);
 
     const creds = this.creds();
@@ -256,6 +325,52 @@ export class DeployDO {
     }
 
     const anyFailed = await this.runSteps(rec, wf.steps, shallow, shallow.headSha, creds, rec.branch);
+    return this.finish(rec, anyFailed ? "failed" : "success");
+  }
+
+  // -- CI-delegated deploy (v0.3) ---------------------------------------------
+  // The CI pipeline already matched branches and gated on its `needs:` graph;
+  // here we read the named job's deploy steps STRICTLY at the delegated sha
+  // (ref-aware clone — feature branches and raced HEADs included) and ship
+  // them, preferring sandbox-built entry files handed over by the CI run.
+
+  private async runCiDelegatedDeploy(req: DeployRequest): Promise<DeployRecord> {
+    const workflow = req.workflow ?? CI_WORKFLOW_PATH;
+    let shallow: ShallowRepo;
+    try {
+      shallow = await cloneRepoAtRef(
+        await this.env.ARTIFACTS.get(req.artifactsRepoName),
+        req.remote,
+        branchOf(req.ref),
+        req.sha,
+      );
+    } catch (e) {
+      const rec = await this.begin(req.ref, req.sha, "ci", {
+        workflow,
+        ...(req.job ? { job: req.job } : {}),
+      });
+      return this.finish(rec, "failed", `clone failed: ${(e as Error).message}`);
+    }
+
+    const rec = await this.begin(req.ref, req.sha, "ci", {
+      workflow,
+      ...(req.job ? { job: req.job } : {}),
+    });
+    const creds = this.creds();
+    if (!creds) return this.finish(rec, "skipped", "CD not enabled — run `gitflare deploy enable`");
+
+    const ci = await this.loadCiDeploySteps(shallow, req.sha, req.job);
+    if ("error" in ci) return this.finish(rec, "failed", ci.error);
+
+    const anyFailed = await this.runSteps(
+      rec,
+      ci.steps,
+      shallow,
+      req.sha,
+      creds,
+      rec.branch,
+      req.entryOverrides,
+    );
     return this.finish(rec, anyFailed ? "failed" : "success");
   }
 
@@ -280,7 +395,12 @@ export class DeployDO {
         req.toDeployId ? `deploy #${req.toDeployId} not found` : "no prior successful deploy to roll back to",
       );
     }
-    const rec = await this.begin(target.ref, target.sha, "rollback");
+    // Carry the source workflow/job so a rollback-of-a-rollback re-resolves.
+    const source = {
+      ...(target.workflow ? { workflow: target.workflow } : {}),
+      ...(target.job ? { job: target.job } : {}),
+    };
+    const rec = await this.begin(target.ref, target.sha, "rollback", source);
     const creds = this.creds();
     if (!creds) return this.finish(rec, "skipped", "CD not enabled");
 
@@ -292,11 +412,28 @@ export class DeployDO {
       return this.finish(rec, "failed", `full clone failed: ${(e as Error).message}`);
     }
 
-    const wf = await this.loadWorkflow(full, target.sha);
-    if ("error" in wf) return this.finish(rec, "failed", `cannot read workflow at target: ${wf.error}`);
+    // Re-read the steps from whichever workflow file produced the target
+    // deploy (absent workflow field = pre-v0.3 record = deploy.yml).
+    let steps: DeployStep[];
+    if (target.workflow === CI_WORKFLOW_PATH) {
+      const ci = await this.loadCiDeploySteps(full, target.sha, target.job);
+      if ("error" in ci) {
+        return this.finish(rec, "failed", `cannot read workflow at target: ${ci.error}`);
+      }
+      steps = ci.steps;
+      this.log("note: CI-built artifacts aren't stored — rolling back to the committed entry at the target sha");
+    } else {
+      const wf = await this.loadWorkflow(full, target.sha);
+      if ("error" in wf) {
+        return this.finish(rec, "failed", `cannot read workflow at target: ${wf.error}`);
+      }
+      steps = wf.steps;
+    }
 
-    // Rollback never re-runs migrations (they're forward-only).
-    const steps = wf.steps.map((s) => {
+    // Rollback never re-runs migrations (they're forward-only). Note: a CI
+    // deploy that shipped a sandbox-built entry rolls back to the COMMITTED
+    // file at the target sha — build outputs aren't stored anywhere to replay.
+    steps = steps.map((s) => {
       const { migrations, ...rest } = s;
       void migrations;
       return rest as DeployStep;
@@ -314,6 +451,7 @@ export class DeployDO {
     commitOid: string,
     creds: { token: string; accountId: string },
     branch: string,
+    entryOverrides?: Record<string, string>,
   ): Promise<boolean> {
     let anyFailed = false;
     for (const step of steps) {
@@ -334,7 +472,7 @@ export class DeployDO {
         const result =
           step.kind === "pages"
             ? await this.deployPagesStep(step, shallow, commitOid, creds, branch)
-            : await this.deployWorkerStep(step, shallow, commitOid, creds);
+            : await this.deployWorkerStep(step, shallow, commitOid, creds, entryOverrides?.[step.entry]);
 
         const sr: DeployStepResult = {
           project: step.project,
@@ -361,19 +499,29 @@ export class DeployDO {
     shallow: ShallowRepo,
     commitOid: string,
     creds: { token: string; accountId: string },
+    entryOverride?: string,
   ): Promise<DeployApiResult> {
-    const entry = await readBlobAtCommit(shallow, commitOid, step.entry).catch(() => null);
-    if (!entry || entry.isBinary || !entry.text) {
-      return { ok: false, status: 0, detail: `entry not found or not text: ${step.entry}` };
+    // A CI run hands over the entry it just built in the sandbox; the commit's
+    // copy (often a stale checked-in artifact) is only the fallback.
+    let code: string;
+    if (entryOverride !== undefined) {
+      code = entryOverride;
+      this.log(`  uploading CI-built ${step.entry} (${code.length} bytes, ${countBindings(step)} bindings)`);
+    } else {
+      const entry = await readBlobAtCommit(shallow, commitOid, step.entry).catch(() => null);
+      if (!entry || entry.isBinary || !entry.text) {
+        return { ok: false, status: 0, detail: `entry not found or not text: ${step.entry}` };
+      }
+      code = entry.text;
+      this.log(`  uploading ${step.entry} (${entry.size} bytes, ${countBindings(step)} bindings)`);
     }
-    this.log(`  uploading ${step.entry} (${entry.size} bytes, ${countBindings(step)} bindings)`);
     return uploadWorkerScript({
       accountId: creds.accountId,
       apiToken: creds.token,
       upload: {
         scriptName: step.project,
         moduleFileName: "worker.js",
-        code: entry.text,
+        code,
         bindings: step.bindings,
         ...(step.compatibility_date ? { compatibilityDate: step.compatibility_date } : {}),
       },
