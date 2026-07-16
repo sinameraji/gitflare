@@ -9,7 +9,10 @@ import { pickRepo, getCfToken, type RepoEntry } from "../repo-select.js";
 
 const TOKEN_URL = "https://dash.cloudflare.com/profile/api-tokens";
 
-const INSTANCE_TYPES = ["dev", "basic", "standard"];
+// Cloudflare Containers instance types. "standard" was renamed to the numbered
+// "standard-N" tiers; we default to standard-1 (real test suites OOM on basic).
+const INSTANCE_TYPES = ["dev", "basic", "standard-1", "standard-2", "standard-3", "standard-4"];
+const DEFAULT_INSTANCE_TYPE = "standard-1";
 
 async function fetchRemote(
   cf: CloudflareClient,
@@ -52,7 +55,7 @@ export async function runCiEnable(
     ].join("\n"),
   );
 
-  const instanceType = opts.instanceType ?? "standard";
+  const instanceType = opts.instanceType ?? DEFAULT_INSTANCE_TYPE;
   if (!INSTANCE_TYPES.includes(instanceType)) {
     p.log.error(
       `--instance-type must be one of ${INSTANCE_TYPES.join(" | ")}, got "${instanceType}".`,

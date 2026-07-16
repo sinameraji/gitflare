@@ -91,7 +91,7 @@ const ci = program
 ci.command("enable")
   .description("Enable CI — run .gitflare/ci.yml on push in a Cloudflare Sandbox container")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
-  .option("--instance-type <type>", "sandbox container size: dev | basic | standard (default standard)")
+  .option("--instance-type <type>", "sandbox container size: dev | basic | standard-1..4 (default standard-1)")
   .action(runCiEnable);
 ci.command("disable")
   .description("Disable CI for a repo (the container config stays provisioned)")
