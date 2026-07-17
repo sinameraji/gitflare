@@ -25,6 +25,17 @@ export interface LocalConfig {
       // Bearer secret the CLI presents to the Worker's /control/* endpoints.
       controlSecret: string;
     };
+    // Set by `gitflare ci enable`. `enabled: false` after `ci disable` — the
+    // container config stays provisioned (see wrangler.ts) so re-enable never
+    // needs a deleted_classes migration.
+    ci?: {
+      enabledAt: string;
+      enabled: boolean;
+      // Bearer secret for /control/* — shared with deploy (one Worker secret).
+      controlSecret: string;
+      // Cloudflare Containers instance type for the CI sandbox.
+      instanceType: string;
+    };
   }>;
   // Tokens — kept local, never sent to gitflare servers.
   github?: { token: string };

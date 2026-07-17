@@ -11,7 +11,8 @@ export interface SyncParams {
   githubFullName: string;          // "owner/repo"
   githubToken: string;             // for private repos + rate limit
   ref: string;                     // "refs/heads/main"
-  artifactsRepo: ArtifactsRepo;    // the destination handle
+  artifactsRepo: ArtifactsRepo;    // the destination handle (for createToken)
+  remote: string;                  // the Artifacts clone URL, from REPO_MAP
   beforeSha: string;               // SHA before the push (00...0 if new branch)
   afterSha: string;                // SHA after the push
 }
@@ -83,7 +84,12 @@ export async function syncGithubToArtifacts(
     fs,
     http,
     dir,
-    url: params.artifactsRepo.remote,
+    // Use the REPO_MAP remote string, NOT artifactsRepo.remote: on the live
+    // Artifacts beta, property access on the binding returns a lazy RPC proxy
+    // (JsRpcProperty) that stringifies to "[object JsRpcProperty]" — only RPC
+    // *methods* like createToken() resolve. The REPO_MAP string is what every
+    // browse path already uses successfully.
+    url: params.remote,
     ref: params.ref,
     remoteRef: params.ref,
     force: false,

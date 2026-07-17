@@ -11,6 +11,13 @@ import {
   runDeploysList,
   runDeployRollback,
 } from "./commands/deploy.js";
+import {
+  runCiEnable,
+  runCiDisable,
+  runCiRun,
+  runCiList,
+  runCiCancel,
+} from "./commands/ci.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version?: string };
@@ -77,5 +84,30 @@ deploy
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
   .option("--to <id>", "deploy id to roll back to")
   .action(runDeployRollback);
+
+const ci = program
+  .command("ci")
+  .description("Generic CI: run .gitflare/ci.yml jobs on Cloudflare Sandboxes on push");
+ci.command("enable")
+  .description("Enable CI — run .gitflare/ci.yml on push in a Cloudflare Sandbox container")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .option("--instance-type <type>", "sandbox container size: dev | basic | standard-1..4 (default standard-1)")
+  .action(runCiEnable);
+ci.command("disable")
+  .description("Disable CI for a repo (the container config stays provisioned)")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runCiDisable);
+ci.command("run")
+  .description("Run the CI pipeline for the current Artifacts HEAD now (the GitHub-down escape hatch)")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runCiRun);
+ci.command("list")
+  .description("List recent CI runs for a repo")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runCiList);
+ci.command("cancel")
+  .description("Cancel the in-flight CI run for a repo")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runCiCancel);
 
 program.parseAsync(process.argv);

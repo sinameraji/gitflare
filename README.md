@@ -22,7 +22,7 @@ GitFlare ships in versions. Each one stands alone — if the next one never gets
 |---|---|---|
 | **v0.1** | ✅ **shipping — you are here** | **Read replica.** One command mirrors a GitHub repo into your Cloudflare account: Artifacts for git storage, a Worker that takes GitHub webhooks + serves a dashboard, file browsing with syntax highlighting, README rendering (images proxied through your Worker), sync status. Optional Cloudflare Access gates the dashboard for private repos. If GitHub is down, reads + clones still work. |
 | v0.2 | 🧪 code-complete (pending a live run) | **CD that doesn't depend on GitHub.** Push → your Worker deploys to your own account: Workers + Pages (with preview deploys), bindings (vars/KV/R2/D1/DO/services), opt-in D1 migrations, live deploy logs over WebSocket, plus `deploy run` (the GitHub-down escape hatch), `deploy list`, and `deploy rollback`. Deploys **pre-built** artifacts via `.gitflare/deploy.yml`; arbitrary build steps arrive with v0.3 CI. |
-| v0.3 | 📋 planned | **Generic CI.** A small declarative workflow format that runs tests on Cloudflare Sandboxes (full Linux) or Dynamic Workers (fast JS path). Build cache in R2. Browser Run for E2E. |
+| v0.3 | 🚧 in progress (core CI live-validated) | **Generic CI.** `.gitflare/ci.yml` with jobs / `needs:` / `run:` steps, executed on Cloudflare Sandboxes (full Linux containers on your account) — validated end-to-end: push → sandbox boots → clones → runs your steps with live logs. Deploy jobs gate on test jobs, and a Worker deploy ships **what CI just built** (not the stale committed file). Cancel, run history, GitHub commit statuses. Still to come in v0.3: R2 build cache, Browser Run for E2E, a GitHub Actions importer, Pages build artifacts. |
 | v0.4 | 📋 planned | **Multi-user teams.** PRs, reviews, comments — native to GitFlare, bidirectionally mirrored to GitHub. Stacked diffs. "Open PR in sandbox" one-click ephemeral env. |
 | v0.5 | 📋 planned | **Cross-tenant collaboration via Cloudflare Mesh.** Alice and Bob on separate Cloudflare accounts; private repos served Mesh-only with per-identity policies instead of SSH keys. |
 | v0.6 | 📋 planned | **Public repos + discovery.** A real code browser for the public web, search, forks across accounts. |
@@ -83,12 +83,35 @@ GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed
 
   Deploys and their **live logs** show up at `<dashboard-url>/r/<repo>/deployments`.
 
+- `gitflare ci enable` — turn on generic CI (v0.3, requires the Workers Paid plan for Containers). Commit a `.gitflare/ci.yml` and every push runs your jobs in a **Cloudflare Sandbox on your own account** — full Linux, Node 20 + Python 3.11 — no GitHub Actions involved:
+
+  ```yaml
+  on: push
+  branches: [main]
+  jobs:
+    test:
+      steps:
+        - run: npm ci
+        - run: npm test
+    deploy:
+      needs: [test]          # deploys only if tests pass
+      steps:
+        - cloudflare/deploy:
+            project: my-worker
+            kind: worker
+            entry: dist/worker.js
+  ```
+
+  If a job builds `entry` (e.g. `npm run build`), the deploy ships the freshly built file from the CI workspace, not the committed copy. When `ci.yml` exists, it owns the pipeline — `deploy.yml` no longer runs ungated. Deploy jobs also need `gitflare deploy enable` (that's where the deploy token lives).
+
+- `gitflare ci run` / `list` / `cancel` — trigger the pipeline for the current Artifacts HEAD (GitHub-down escape hatch), review runs, or stop a runaway one. Runs + **live logs** stream at `<dashboard-url>/r/<repo>/ci`, and results post back to GitHub as commit statuses (`gitflare/ci`) when GitHub is reachable.
+
 ## Contributing
 
-Pre-alpha, built in the open, and there's a lot of obvious next work. Cloudflare Access (M5), syntax highlighting, the image proxy, and the full v0.2 CD feature set have landed — see [PLAN.md §12](./PLAN.md#12-milestones-and-development-log) for current status. PRs and issues are welcome — particularly on:
+Pre-alpha, built in the open, and there's a lot of obvious next work. Cloudflare Access (M5), the full v0.2 CD feature set, and the v0.3 core CI (M8: sandbox jobs, needs-gated deploys, artifact handover) have landed — see [PLAN.md §12](./PLAN.md#12-milestones-and-development-log) for current status. PRs and issues are welcome — particularly on:
 
-- **Live-validating M5 + v0.2** against a real Cloudflare account. The Access apps/policies API, the Workers Scripts upload, Pages Direct Upload, and the D1 query path are coded to spec but need an end-to-end run.
-- **v0.2 build steps.** CD currently deploys pre-built artifacts; running `npm run build` needs a Linux runtime (Sandboxes) — that's [v0.3](./PLAN.md#v03--generic-ci-tests-lint-build).
+- **Live-validating M5 + v0.2 + M8** against a real Cloudflare account. The Access apps/policies API, the Workers Scripts upload, Pages Direct Upload, the D1 query path, and now the Containers provisioning + Sandbox exec paths are coded to spec but need an end-to-end run.
+- **v0.3 remainder.** R2 build cache keyed on lockfile hash, Browser Run for E2E, the GitHub Actions importer, and Pages build-artifact handover — see [PLAN.md §12 M8 notes](./PLAN.md#12-milestones-and-development-log).
 - **Private `git clone`.** Access gates the dashboard, but clone still hits Artifacts directly. Closing that needs an Access service token / Mesh path (v0.4+).
 - **Custom domains** in front of the Worker, and **better empty states / error messages** anywhere in the CLI or dashboard.
 - **Anything in [PLAN.md §8 Open Questions](./PLAN.md#8-open-questions-to-resolve-before-v01-starts)** you have a strong opinion on.

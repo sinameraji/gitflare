@@ -1,12 +1,14 @@
-// A tiny YAML-subset parser — just enough for `.gitflare/deploy.yml`. We avoid
+// A tiny YAML-subset parser — just enough for `.gitflare/*.yml`. We avoid
 // a full YAML library (~200KB) to keep the worker bundle lean. Supports:
 //   - nested maps (`key:` then indented children)
 //   - block lists (`- item`), including lists of maps
 //   - scalars: strings, numbers, booleans, null
 //   - inline lists: `[a, b, c]`
+//   - literal block scalars (`key: |` / `key: |-`) — used by multi-line `run:`
 //   - quoted strings, `#` comments, blank lines
-// NOT supported (and not needed here): anchors, multi-line scalars, flow maps,
-// multiple documents. Anything outside the subset parses on a best-effort basis.
+// NOT supported (and not needed here): anchors, folded scalars (`>`), flow
+// maps spanning lines, multiple documents. Anything outside the subset parses
+// on a best-effort basis.
 
 export type YamlValue =
   | string
@@ -22,8 +24,9 @@ interface Line {
 }
 
 export function parseYaml(src: string): YamlValue {
+  const { text, blocks } = extractBlockScalars(src);
   const lines: Line[] = [];
-  for (const raw of src.split(/\r?\n/)) {
+  for (const raw of text.split(/\r?\n/)) {
     if (raw.trim().startsWith("#")) continue;
     const noComment = stripComment(raw);
     if (!noComment.trim()) continue;
@@ -34,6 +37,75 @@ export function parseYaml(src: string): YamlValue {
   }
   if (lines.length === 0) return null;
   const [value] = parseBlock(lines, 0, lines[0]!.indent);
+  return blocks.length > 0 ? resolveBlocks(value, blocks) : value;
+}
+
+// -- literal block scalars ----------------------------------------------------
+// `key: |` swallows the following more-indented raw lines (comments and blanks
+// preserved verbatim) before structural parsing. The content is stashed and a
+// NUL-delimited placeholder — impossible in real YAML scalars — takes its
+// place, resolved back after the tree is built.
+
+const BLOCK_TOKEN = (i: number): string => `\u0000block${i}\u0000`;
+
+function extractBlockScalars(src: string): { text: string; blocks: string[] } {
+  const raw = src.split(/\r?\n/);
+  const out: string[] = [];
+  const blocks: string[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const line = raw[i]!;
+    const stripped = stripComment(line).trimEnd();
+    const m = stripped.match(/^(\s*)(- )?([A-Za-z0-9_./-]+):\s*([|>])([+-]?)$/);
+    if (!m) {
+      out.push(line);
+      i++;
+      continue;
+    }
+    if (m[4] === ">") {
+      throw new Error("folded block scalars (>) aren't supported — use | instead");
+    }
+    // Content must be indented past the key (for `- key: |`, past the dash slot).
+    const keyIndent = m[1]!.length + (m[2] ? 2 : 0);
+    const content: string[] = [];
+    let j = i + 1;
+    while (j < raw.length) {
+      const l = raw[j]!;
+      if (l.trim() === "") {
+        content.push("");
+        j++;
+        continue;
+      }
+      const ind = l.length - l.trimStart().length;
+      if (ind <= keyIndent) break;
+      content.push(l);
+      j++;
+    }
+    // Drop trailing blank lines before measuring the base indent.
+    while (content.length > 0 && content[content.length - 1] === "") content.pop();
+    const base = Math.min(
+      ...content.filter((l) => l !== "").map((l) => l.length - l.trimStart().length),
+    );
+    let text = content.map((l) => (l === "" ? "" : l.slice(base))).join("\n");
+    if (m[5] !== "-" && text !== "") text += "\n"; // `|` keeps one trailing newline; `|-` chomps
+    blocks.push(text);
+    out.push(`${m[1]}${m[2] ?? ""}${m[3]}: ${BLOCK_TOKEN(blocks.length - 1)}`);
+    i = j;
+  }
+  return { text: out.join("\n"), blocks };
+}
+
+function resolveBlocks(value: YamlValue, blocks: string[]): YamlValue {
+  if (typeof value === "string") {
+    const m = value.match(/^\u0000block(\d+)\u0000$/);
+    return m ? blocks[Number(m[1])]! : value;
+  }
+  if (Array.isArray(value)) return value.map((v) => resolveBlocks(v, blocks));
+  if (typeof value === "object" && value !== null) {
+    const out: { [k: string]: YamlValue } = {};
+    for (const [k, v] of Object.entries(value)) out[k] = resolveBlocks(v, blocks);
+    return out;
+  }
   return value;
 }
 

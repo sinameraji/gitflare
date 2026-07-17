@@ -72,7 +72,8 @@ export const Deployments: FC<Props> = (p) => (
 
       <h1>Deployments</h1>
       <p class="muted">
-        {p.githubFullName} · <a href={`/r/${p.artifactsRepoName}/tree/`}>browse code</a>
+        {p.githubFullName} · <a href={`/r/${p.artifactsRepoName}/tree/`}>browse code</a> ·{" "}
+        <a href={`/r/${p.artifactsRepoName}/ci`}>CI runs</a>
       </p>
 
       {!p.cdEnabled ? (

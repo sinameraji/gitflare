@@ -7,12 +7,19 @@ import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt } from "./arti
 import { Browse } from "./ui/browse";
 import { Home, type HomeRepo } from "./ui/home";
 import { Deployments } from "./ui/deployments";
+import { Runs } from "./ui/runs";
 import { NotFound, ErrorView } from "./ui/states";
 import { accessGuard, type AccessVariables } from "./access/middleware";
 import { deployStubFor, type DeployRecord } from "./durable-objects/deploy";
+import { ciStubFor, type CiRunRecord } from "./durable-objects/ci";
 
 export { RepoDO } from "./durable-objects/repo";
 export { DeployDO } from "./durable-objects/deploy";
+export { CiDO } from "./durable-objects/ci";
+// The Sandbox container class must be exported for the (optional) SANDBOX
+// binding + [[containers]] block that `gitflare ci enable` adds; inert unless
+// the deployed config binds it.
+export { Sandbox } from "@cloudflare/sandbox";
 
 const app = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
 
@@ -261,6 +268,67 @@ app.get("/r/:name/deployments/stream", async (c) => {
   return stub.fetch(new Request("https://deploy-do/stream", c.req.raw));
 });
 
+// ---- CI runs (v0.3) --------------------------------------------------------
+
+app.get("/r/:name/ci", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo)
+    return c.html(
+      <NotFound title="Repo not found" detail={`No mirror named “${name}” is configured on this Worker.`} />,
+      404,
+    );
+  let runs: CiRunRecord[] = [];
+  try {
+    const stub = ciStubFor(c.env, name);
+    const resp = await stub.fetch("https://ci-do/state");
+    if (resp.ok) ({ runs } = (await resp.json()) as { runs: CiRunRecord[] });
+  } catch {
+    // Soft fail — show an empty list.
+  }
+  return c.html(
+    <Runs
+      githubFullName={repo.githubFullName}
+      artifactsRepoName={name}
+      runs={runs}
+      ciEnabled={c.env.CI_ENABLED === "1"}
+      canCancel={!!c.env.ACCESS_AUD}
+      version={c.env.GITFLARE_VERSION ?? "0.0.0"}
+    />,
+  );
+});
+
+// Live CI-log WebSocket — forwarded to the CiDO, Access-guarded via /r/*.
+app.get("/r/:name/ci/stream", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return c.text("unknown repo", 404);
+  if (c.req.header("Upgrade") !== "websocket") return c.text("expected websocket", 426);
+  const stub = ciStubFor(c.env, name);
+  return stub.fetch(new Request("https://ci-do/stream", c.req.raw));
+});
+
+// Cancel button on the runs page. This is a state-changing action, so it must
+// only be reachable by an authenticated principal. The Access guard on /r/*
+// authenticates the human ONLY when Access is enabled; on a public mirror it
+// no-ops, which would let anyone kill in-flight runs. So we refuse the
+// page-initiated cancel when Access is off and point users at the
+// CONTROL_SECRET-gated CLI (`gitflare ci cancel`) instead.
+app.post("/r/:name/ci/cancel", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return c.json({ error: "unknown repo" }, 404);
+  if (!c.env.ACCESS_AUD) {
+    return c.json(
+      { error: "cancel from the dashboard requires Cloudflare Access; use `gitflare ci cancel`" },
+      403,
+    );
+  }
+  const stub = ciStubFor(c.env, name);
+  const resp = await stub.fetch("https://ci-do/cancel", { method: "POST" });
+  return c.json((await resp.json()) as object, resp.status === 202 ? 202 : 200);
+});
+
 // ---- Control plane (CLI → Worker), authed by CONTROL_SECRET, not Access ----
 // Mirrors how /webhooks/github sits outside Access with its own auth.
 
@@ -322,6 +390,52 @@ app.get("/control/deployments", async (c) => {
   return c.json(resp.ok ? ((await resp.json()) as object) : { deploys: [] });
 });
 
+// ---- CI control plane (v0.3) — same CONTROL_SECRET bearer as deploys ------
+
+app.post("/control/ci/run", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const { repo } = (await c.req.json().catch(() => ({}))) as { repo?: string };
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = ciStubFor(c.env, entry.name);
+  // CiDO answers 202 immediately and runs the pipeline detached.
+  c.executionCtx.waitUntil(
+    stub.fetch("https://ci-do/run", {
+      method: "POST",
+      body: JSON.stringify({
+        artifactsRepoName: entry.name,
+        remote: entry.remote,
+        githubFullName: entry.githubFullName,
+        ref: "",
+        sha: "",
+        mode: "manual",
+        statusTargetUrl: `${new URL(c.req.url).origin}/r/${entry.name}/ci`,
+      }),
+    }),
+  );
+  return c.json({ accepted: true }, 202);
+});
+
+app.get("/control/ci/runs", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const repo = c.req.query("repo");
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = ciStubFor(c.env, entry.name);
+  const resp = await stub.fetch("https://ci-do/state");
+  return c.json(resp.ok ? ((await resp.json()) as object) : { runs: [] });
+});
+
+app.post("/control/ci/cancel", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const { repo } = (await c.req.json().catch(() => ({}))) as { repo?: string };
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = ciStubFor(c.env, entry.name);
+  const resp = await stub.fetch("https://ci-do/cancel", { method: "POST" });
+  return c.json((await resp.json()) as object, resp.status === 202 ? 202 : 200);
+});
+
 app.post("/webhooks/github", async (c) => {
   const signature = c.req.header("x-hub-signature-256");
   const event = c.req.header("x-github-event");
@@ -353,6 +467,13 @@ app.post("/webhooks/github", async (c) => {
       return c.json({ accepted: true, skipped: "branch-delete" }, 202);
     }
 
+    // Only branch pushes drive sync + CD/CI. Tag pushes (refs/tags/*) and other
+    // non-branch refs would otherwise mint failed CI runs and red commit
+    // statuses (branchOf() leaves them unmatched by any workflow branch list).
+    if (!payload.ref.startsWith("refs/heads/")) {
+      return c.json({ accepted: true, skipped: "non-branch-ref" }, 202);
+    }
+
     const entry = lookupArtifactsRepoEntry(
       c.env,
       payload.repository.full_name,
@@ -364,37 +485,62 @@ app.post("/webhooks/github", async (c) => {
       );
     }
 
-    const stub = repoStubFor(c.env, entry.name);
-    const resp = await stub.fetch("https://repo-do/sync", {
-      method: "POST",
-      body: JSON.stringify({
-        githubFullName: payload.repository.full_name,
-        artifactsRepoName: entry.name,
-        ref: payload.ref,
-        beforeSha: payload.before,
-        afterSha: payload.after,
-      }),
-    });
-    const json = await resp.json();
-
-    // CD (v0.2): once the sync landed, kick off a deploy. DeployDO no-ops if
-    // there's no .gitflare/deploy.yml or CD isn't enabled. Runs after the
-    // response so the webhook returns fast.
-    if (resp.ok) {
-      const deploy = deployStubFor(c.env, entry.name);
-      c.executionCtx.waitUntil(
-        deploy.fetch("https://deploy-do/deploy", {
+    // Respond to GitHub immediately and do the (potentially multi-second) sync
+    // + dispatch in the background. GitHub times out webhook deliveries at 10s;
+    // an in-worker isomorphic-git sync of a real repo can exceed that, so
+    // awaiting it inline makes every push show as a failed delivery (and
+    // triggers redeliveries). Fire-and-forget instead — sync errors surface in
+    // the RepoDO/dashboard, not GitHub's delivery UI.
+    const origin = new URL(c.req.url).origin;
+    c.executionCtx.waitUntil(
+      (async () => {
+        const stub = repoStubFor(c.env, entry.name);
+        const resp = await stub.fetch("https://repo-do/sync", {
           method: "POST",
           body: JSON.stringify({
+            githubFullName: payload.repository.full_name,
             artifactsRepoName: entry.name,
             remote: entry.remote,
             ref: payload.ref,
-            sha: payload.after,
+            beforeSha: payload.before,
+            afterSha: payload.after,
           }),
-        }),
-      );
-    }
-    return c.json({ accepted: true, result: json }, resp.ok ? 202 : 500);
+        });
+        if (!resp.ok) return;
+
+        // Once the sync landed, exactly ONE pipeline owns the push (a single
+        // decision point — no races between two DOs deciding independently):
+        //  - CI enabled (v0.3): CiDO. It runs .gitflare/ci.yml when present and
+        //    passes plain v0.2 pushes through to DeployDO itself when it isn't.
+        //  - otherwise (v0.2): DeployDO, which no-ops without a deploy.yml and
+        //    fails closed if a ci.yml is committed but CI was never enabled.
+        if (c.env.CI_ENABLED === "1") {
+          await ciStubFor(c.env, entry.name).fetch("https://ci-do/run", {
+            method: "POST",
+            body: JSON.stringify({
+              artifactsRepoName: entry.name,
+              remote: entry.remote,
+              githubFullName: payload.repository.full_name,
+              ref: payload.ref,
+              sha: payload.after,
+              mode: "push",
+              statusTargetUrl: `${origin}/r/${entry.name}/ci`,
+            }),
+          });
+        } else {
+          await deployStubFor(c.env, entry.name).fetch("https://deploy-do/deploy", {
+            method: "POST",
+            body: JSON.stringify({
+              artifactsRepoName: entry.name,
+              remote: entry.remote,
+              ref: payload.ref,
+              sha: payload.after,
+            }),
+          });
+        }
+      })(),
+    );
+    return c.json({ accepted: true }, 202);
   }
 
   return c.json({ accepted: true, skipped: event }, 202);

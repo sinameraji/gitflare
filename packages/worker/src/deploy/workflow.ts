@@ -63,19 +63,19 @@ export interface ParseResult {
   error?: string;
 }
 
-function asArray(v: YamlValue | undefined): YamlValue[] {
+export function asArray(v: YamlValue | undefined): YamlValue[] {
   if (v == null) return [];
   return Array.isArray(v) ? v : [v];
 }
 
-function asString(v: YamlValue | undefined): string | undefined {
+export function asString(v: YamlValue | undefined): string | undefined {
   if (v == null) return undefined;
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return undefined;
 }
 
-function isObj(v: YamlValue | undefined): v is { [k: string]: YamlValue } {
+export function isObj(v: YamlValue | undefined): v is { [k: string]: YamlValue } {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
@@ -128,6 +128,58 @@ function parseBindings(step: { [k: string]: YamlValue }): WorkerBindings {
   return b;
 }
 
+/**
+ * Parse the body of one `cloudflare/deploy:` step. Shared with the v0.3 CI
+ * workflow parser (src/ci/workflow.ts) so both formats validate identically.
+ */
+export function parseDeployStepConfig(cfg: {
+  [k: string]: YamlValue;
+}): { step?: DeployStep; error?: string } {
+  const project = asString(cfg.project);
+  const entry = asString(cfg.entry);
+  const kind = (asString(cfg.kind) ?? "worker") as DeployStep["kind"];
+  if (!project) return { error: "step missing `project`" };
+  if (!entry) return { error: "step missing `entry`" };
+  if (kind !== "worker" && kind !== "pages") {
+    return { error: `unsupported kind "${kind}" (worker | pages)` };
+  }
+
+  const step: DeployStep = {
+    type: "cloudflare/deploy",
+    project,
+    kind,
+    entry,
+    bindings: parseBindings(cfg),
+  };
+  const compat = asString(cfg.compatibility_date);
+  if (compat) step.compatibility_date = compat;
+  const prodBranch = asString(cfg.production_branch);
+  if (prodBranch) step.production_branch = prodBranch;
+
+  if (isObj(cfg.migrations)) {
+    const dir = asString(cfg.migrations.dir);
+    const databaseId = asString(cfg.migrations.database_id);
+    if (dir && databaseId) {
+      step.migrations = {
+        dir,
+        database_id: databaseId,
+        apply: cfg.migrations.apply === true,
+      };
+    }
+  }
+  return { step };
+}
+
+/** Parse `on:` + `branches:` — shared by both workflow formats. */
+export function parseTriggers(root: {
+  [k: string]: YamlValue;
+}): { on?: string[]; branches?: string[]; error?: string } {
+  const on = asArray(root.on).map(asString).filter((s): s is string => !!s);
+  if (on.length === 0) return { error: "missing `on:`" };
+  const branches = asArray(root.branches).map(asString).filter((s): s is string => !!s);
+  return { on, branches };
+}
+
 export function parseDeployWorkflow(src: string): ParseResult {
   let root: YamlValue;
   try {
@@ -137,10 +189,8 @@ export function parseDeployWorkflow(src: string): ParseResult {
   }
   if (!isObj(root)) return { error: "deploy.yml must be a mapping" };
 
-  const on = asArray(root.on).map(asString).filter((s): s is string => !!s);
-  if (on.length === 0) return { error: "missing `on:`" };
-
-  const branches = asArray(root.branches).map(asString).filter((s): s is string => !!s);
+  const triggers = parseTriggers(root);
+  if (triggers.error || !triggers.on) return { error: triggers.error ?? "missing `on:`" };
 
   const steps: DeployStep[] = [];
   for (const raw of asArray(root.steps)) {
@@ -150,43 +200,13 @@ export function parseDeployWorkflow(src: string): ParseResult {
       const key = Object.keys(raw)[0] ?? "?";
       return { error: `unsupported step "${key}" (only cloudflare/deploy in v0.2)` };
     }
-    const project = asString(cfg.project);
-    const entry = asString(cfg.entry);
-    const kind = (asString(cfg.kind) ?? "worker") as DeployStep["kind"];
-    if (!project) return { error: "step missing `project`" };
-    if (!entry) return { error: "step missing `entry`" };
-    if (kind !== "worker" && kind !== "pages") {
-      return { error: `unsupported kind "${kind}" (worker | pages)` };
-    }
-
-    const step: DeployStep = {
-      type: "cloudflare/deploy",
-      project,
-      kind,
-      entry,
-      bindings: parseBindings(cfg),
-    };
-    const compat = asString(cfg.compatibility_date);
-    if (compat) step.compatibility_date = compat;
-    const prodBranch = asString(cfg.production_branch);
-    if (prodBranch) step.production_branch = prodBranch;
-
-    if (isObj(cfg.migrations)) {
-      const dir = asString(cfg.migrations.dir);
-      const databaseId = asString(cfg.migrations.database_id);
-      if (dir && databaseId) {
-        step.migrations = {
-          dir,
-          database_id: databaseId,
-          apply: cfg.migrations.apply === true,
-        };
-      }
-    }
-    steps.push(step);
+    const parsed = parseDeployStepConfig(cfg);
+    if (parsed.error || !parsed.step) return { error: parsed.error ?? "invalid step" };
+    steps.push(parsed.step);
   }
 
   if (steps.length === 0) return { error: "no steps defined" };
-  return { workflow: { on, branches, steps } };
+  return { workflow: { on: triggers.on, branches: triggers.branches ?? [], steps } };
 }
 
 /** Does this workflow run for a push to `ref` (e.g. "refs/heads/main")? */
