@@ -48,12 +48,14 @@ describe("buildScriptUploadForm", () => {
 });
 
 describe("uploadWorkerScript", () => {
-  it("PUTs to the scripts API with bearer auth", async () => {
-    let url = "";
-    let method = "";
-    const fakeFetch = (async (u: string, init: RequestInit) => {
-      url = u;
-      method = init.method ?? "";
+  it("PUTs the script, enables the workers.dev subdomain, and returns the URL", async () => {
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    const fakeFetch = (async (u: string, init: RequestInit = {}) => {
+      calls.push({ url: u, method: init.method ?? "GET", body: typeof init.body === "string" ? init.body : undefined });
+      if (u.endsWith("/subdomain") && (init.method ?? "GET") === "GET") {
+        // account subdomain lookup
+        return new Response(JSON.stringify({ success: true, result: { subdomain: "myacct" } }), { status: 200 });
+      }
       return new Response(JSON.stringify({ success: true, errors: [] }), { status: 200 });
     }) as unknown as typeof fetch;
     const r = await uploadWorkerScript({
@@ -63,13 +65,23 @@ describe("uploadWorkerScript", () => {
       fetchImpl: fakeFetch,
     });
     expect(r.ok).toBe(true);
-    expect(method).toBe("PUT");
-    expect(url).toContain("/accounts/acc/workers/scripts/w");
+    // 1. the PUT upload
+    const put = calls.find((c) => c.method === "PUT")!;
+    expect(put.url).toContain("/accounts/acc/workers/scripts/w");
+    // 2. the subdomain-enable POST (without it the worker 404s)
+    const enable = calls.find((c) => c.method === "POST" && c.url.endsWith("/scripts/w/subdomain"))!;
+    expect(enable).toBeTruthy();
+    expect(JSON.parse(enable.body!)).toMatchObject({ enabled: true });
+    // 3. the URL resolved from the account subdomain
+    expect(r.url).toBe("https://w.myacct.workers.dev");
   });
 
-  it("surfaces API errors", async () => {
-    const fakeFetch = (async () =>
-      new Response(JSON.stringify({ success: false, errors: [{ code: 10001, message: "bad" }] }), { status: 400 })) as unknown as typeof fetch;
+  it("surfaces API errors and does NOT try to enable the subdomain on a failed upload", async () => {
+    const calls: string[] = [];
+    const fakeFetch = (async (u: string, init: RequestInit = {}) => {
+      calls.push(`${init.method ?? "GET"} ${u}`);
+      return new Response(JSON.stringify({ success: false, errors: [{ code: 10001, message: "bad" }] }), { status: 400 });
+    }) as unknown as typeof fetch;
     const r = await uploadWorkerScript({
       accountId: "a",
       apiToken: "t",
@@ -78,6 +90,8 @@ describe("uploadWorkerScript", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.detail).toContain("bad");
+    // Only the PUT ran — no subdomain calls after a failed upload.
+    expect(calls).toEqual(["PUT https://api.cloudflare.com/client/v4/accounts/a/workers/scripts/w"]);
   });
 });
 

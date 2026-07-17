@@ -85,13 +85,39 @@ export interface UploadWorkerParams {
 
 export async function uploadWorkerScript(p: UploadWorkerParams): Promise<DeployApiResult> {
   const doFetch = p.fetchImpl ?? fetch;
-  const url = `${API}/accounts/${p.accountId}/workers/scripts/${p.upload.scriptName}`;
-  const res = await doFetch(url, {
+  const auth = { Authorization: `Bearer ${p.apiToken}` };
+  const scriptUrl = `${API}/accounts/${p.accountId}/workers/scripts/${p.upload.scriptName}`;
+  const res = await doFetch(scriptUrl, {
     method: "PUT",
-    headers: { Authorization: `Bearer ${p.apiToken}` },
+    headers: auth,
     body: buildScriptUploadForm(p.upload),
   });
-  return envelope(res);
+  const result = await envelope(res);
+  if (!result.ok) return result;
+
+  // Enable the workers.dev subdomain. The raw Scripts API upload leaves it
+  // DISABLED, so without this the freshly-uploaded worker returns 404 at
+  // <name>.<subdomain>.workers.dev (wrangler enables it automatically; the API
+  // does not). We have no custom-domain support yet, so workers.dev is the
+  // only way to reach a deployed worker — enable it by default.
+  await doFetch(`${scriptUrl}/subdomain`, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled: true, previews_enabled: false }),
+  }).catch(() => undefined);
+
+  // Best-effort: resolve the account's workers.dev subdomain to return a
+  // reachable URL for the deployments UI.
+  try {
+    const subRes = await doFetch(`${API}/accounts/${p.accountId}/workers/subdomain`, { headers: auth });
+    const sub = await json<{ result?: { subdomain?: string } }>(subRes);
+    if (sub?.result?.subdomain) {
+      result.url = `https://${p.upload.scriptName}.${sub.result.subdomain}.workers.dev`;
+    }
+  } catch {
+    // No URL — the deploy still succeeded.
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
