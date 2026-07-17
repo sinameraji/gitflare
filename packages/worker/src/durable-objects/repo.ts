@@ -10,6 +10,7 @@ interface RefState {
 interface SyncRequest {
   githubFullName: string;
   artifactsRepoName: string;
+  remote: string;
   ref: string;
   beforeSha: string;
   afterSha: string;
@@ -65,6 +66,7 @@ export class RepoDO {
       githubToken: this.env.GITHUB_TOKEN,
       ref: req.ref,
       artifactsRepo,
+      remote: req.remote,
       beforeSha: req.beforeSha,
       afterSha: req.afterSha,
     });

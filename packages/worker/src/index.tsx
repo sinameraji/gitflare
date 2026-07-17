@@ -491,6 +491,7 @@ app.post("/webhooks/github", async (c) => {
       body: JSON.stringify({
         githubFullName: payload.repository.full_name,
         artifactsRepoName: entry.name,
+        remote: entry.remote,
         ref: payload.ref,
         beforeSha: payload.before,
         afterSha: payload.after,
