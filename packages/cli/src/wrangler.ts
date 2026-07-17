@@ -108,12 +108,19 @@ function tomlFor(main: string, p: DeployParams, version: string): string {
   // The SANDBOX binding + containers block are only emitted once CI has been
   // provisioned (paid-plan Containers). The v3/v4 migrations below are always
   // emitted regardless.
+  // The container application name must be a valid Cloudflare namespace label:
+  // no consecutive dashes. wrangler otherwise derives it as `${workerName}-sandbox`,
+  // and workerName carries `--` from the `owner--repo` Artifacts convention, so
+  // we set an explicit collapsed name (stable across redeploys — it identifies
+  // the container application; don't change it once created).
+  const containerName = `${p.workerName}-sandbox`.replace(/-+/g, "-");
   const sandbox = p.ci?.provisioned
     ? `[[durable_objects.bindings]]
 name = "SANDBOX"
 class_name = "Sandbox"
 
 [[containers]]
+name = "${containerName}"
 class_name = "Sandbox"
 image = "${SANDBOX_IMAGE}"
 instance_type = "${p.ci.instanceType}"
