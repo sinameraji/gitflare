@@ -485,32 +485,37 @@ app.post("/webhooks/github", async (c) => {
       );
     }
 
-    const stub = repoStubFor(c.env, entry.name);
-    const resp = await stub.fetch("https://repo-do/sync", {
-      method: "POST",
-      body: JSON.stringify({
-        githubFullName: payload.repository.full_name,
-        artifactsRepoName: entry.name,
-        remote: entry.remote,
-        ref: payload.ref,
-        beforeSha: payload.before,
-        afterSha: payload.after,
-      }),
-    });
-    const json = await resp.json();
+    // Respond to GitHub immediately and do the (potentially multi-second) sync
+    // + dispatch in the background. GitHub times out webhook deliveries at 10s;
+    // an in-worker isomorphic-git sync of a real repo can exceed that, so
+    // awaiting it inline makes every push show as a failed delivery (and
+    // triggers redeliveries). Fire-and-forget instead — sync errors surface in
+    // the RepoDO/dashboard, not GitHub's delivery UI.
+    const origin = new URL(c.req.url).origin;
+    c.executionCtx.waitUntil(
+      (async () => {
+        const stub = repoStubFor(c.env, entry.name);
+        const resp = await stub.fetch("https://repo-do/sync", {
+          method: "POST",
+          body: JSON.stringify({
+            githubFullName: payload.repository.full_name,
+            artifactsRepoName: entry.name,
+            remote: entry.remote,
+            ref: payload.ref,
+            beforeSha: payload.before,
+            afterSha: payload.after,
+          }),
+        });
+        if (!resp.ok) return;
 
-    // Once the sync landed, exactly ONE pipeline owns the push (a single
-    // decision point — no races between two DOs deciding independently):
-    //  - CI enabled (v0.3): CiDO. It runs .gitflare/ci.yml when present and
-    //    passes plain v0.2 pushes through to DeployDO itself when it isn't.
-    //  - otherwise (v0.2): DeployDO, which no-ops without a deploy.yml and
-    //    fails closed if a ci.yml is committed but CI was never enabled.
-    // Runs after the response so the webhook returns fast.
-    if (resp.ok) {
-      if (c.env.CI_ENABLED === "1") {
-        const ci = ciStubFor(c.env, entry.name);
-        c.executionCtx.waitUntil(
-          ci.fetch("https://ci-do/run", {
+        // Once the sync landed, exactly ONE pipeline owns the push (a single
+        // decision point — no races between two DOs deciding independently):
+        //  - CI enabled (v0.3): CiDO. It runs .gitflare/ci.yml when present and
+        //    passes plain v0.2 pushes through to DeployDO itself when it isn't.
+        //  - otherwise (v0.2): DeployDO, which no-ops without a deploy.yml and
+        //    fails closed if a ci.yml is committed but CI was never enabled.
+        if (c.env.CI_ENABLED === "1") {
+          await ciStubFor(c.env, entry.name).fetch("https://ci-do/run", {
             method: "POST",
             body: JSON.stringify({
               artifactsRepoName: entry.name,
@@ -519,14 +524,11 @@ app.post("/webhooks/github", async (c) => {
               ref: payload.ref,
               sha: payload.after,
               mode: "push",
-              statusTargetUrl: `${new URL(c.req.url).origin}/r/${entry.name}/ci`,
+              statusTargetUrl: `${origin}/r/${entry.name}/ci`,
             }),
-          }),
-        );
-      } else {
-        const deploy = deployStubFor(c.env, entry.name);
-        c.executionCtx.waitUntil(
-          deploy.fetch("https://deploy-do/deploy", {
+          });
+        } else {
+          await deployStubFor(c.env, entry.name).fetch("https://deploy-do/deploy", {
             method: "POST",
             body: JSON.stringify({
               artifactsRepoName: entry.name,
@@ -534,11 +536,11 @@ app.post("/webhooks/github", async (c) => {
               ref: payload.ref,
               sha: payload.after,
             }),
-          }),
-        );
-      }
-    }
-    return c.json({ accepted: true, result: json }, resp.ok ? 202 : 500);
+          });
+        }
+      })(),
+    );
+    return c.json({ accepted: true }, 202);
   }
 
   return c.json({ accepted: true, skipped: event }, 202);

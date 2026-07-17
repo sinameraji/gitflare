@@ -292,16 +292,21 @@ export class CiDO {
     description: string,
   ): Promise<void> {
     // Soft-fail by construction: GitHub being down is gitflare's raison d'être.
+    // But surface WHY a status didn't post (e.g. an expired GITHUB_TOKEN) in
+    // the run log instead of vanishing silently.
     if (this.finalizedRunIds.has(rec.id)) return;
     if (!rec.githubFullName || !/^[0-9a-f]{40}$/.test(rec.sha)) return;
-    await postCommitStatus({
+    const res = await postCommitStatus({
       githubFullName: rec.githubFullName,
       sha: rec.sha,
       state,
       description,
       token: this.env.GITHUB_TOKEN,
       ...(rec.statusTargetUrl ? { targetUrl: rec.statusTargetUrl } : {}),
-    }).catch(() => undefined);
+    }).catch((e) => ({ ok: false, status: 0, detail: (e as Error).message }));
+    if (!res.ok) {
+      this.log(`github commit status (${state}) not posted: ${res.status} ${res.detail ?? ""} — check GITHUB_TOKEN`.trimEnd());
+    }
   }
 
   private sandboxName(runId: number): string {
