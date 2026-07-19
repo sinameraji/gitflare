@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/sinameraji/gitflare/compare/gitflare-v0.3.0...gitflare-v0.3.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **deploy:** enable workers.dev subdomain on worker deploy ([460cf86](https://github.com/sinameraji/gitflare/commit/460cf86ee54099104f4d3d8b6b7c329e4d9469e8))
+* **deploy:** enable workers.dev subdomain on worker deploy ([d5ae143](https://github.com/sinameraji/gitflare/commit/d5ae1434fd1a3d8fc02002aecf36465500198b8f))
+
 ## [0.3.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.2.0...gitflare-v0.3.0) (2026-07-17)
 
 
