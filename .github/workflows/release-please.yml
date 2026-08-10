@@ -23,30 +23,43 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Publishes via npm trusted publishing (OIDC) — no long-lived npm token.
+  # GitHub mints a short-lived credential scoped to this one workflow run, so
+  # there is nothing standing to leak and nothing that bypasses 2FA. The
+  # trusted publisher registered on npmjs.com pins owner/repo AND this exact
+  # workflow filename, so renaming this file breaks publishing until the
+  # registration is updated to match.
   publish:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # required for OIDC — without it npm falls back to a token
     steps:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
 
+      # Trusted publishing needs Node >= 22.14 and npm >= 11.5.1. Node 22 still
+      # bundles npm 10.x, hence the explicit upgrade below. This is the publish
+      # job only — ci.yml keeps testing on Node 20 to hold the engines floor.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+
+      - run: npm install -g npm@latest
 
       - run: pnpm install --frozen-lockfile
 
       # Build the published artifact (tsc + bundles the Worker into dist/).
       - run: pnpm --filter gitflare build
 
+      # No NODE_AUTH_TOKEN: the npm CLI detects the OIDC environment and
+      # authenticates with it. Provenance attestations are generated
+      # automatically for public packages published this way.
       - name: Publish to npm
         working-directory: packages/cli
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
