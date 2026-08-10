@@ -207,7 +207,7 @@ This is the version that justifies the "BYO Cloudflare keys + still collaborate"
 **The federation model:**
 - Each gitflare user runs gitflare on their own Cloudflare account (the *node*). Their repos, issues, runners live there.
 - A small **coordination service** (which Cloudflare-account it runs on is a choice — see §6) holds the cross-tenant graph: who-can-see-what, PR threads that span two nodes, the user identity directory.
-- The coordination service is open-source and self-hostable. Anyone can run it. A user can move from a hosted coordinator to a self-hosted one without changing repos.
+- The coordination service is open-source and self-hostable. Anyone can run it. A user can move between coordinators — a shared one, a community-run one, their own — without changing repos.
 
 **Mesh-mediated trust:**
 - Every gitflare node enrolls in a Mesh network — gets a private Mesh IP, an identity, post-quantum-encrypted transport.
@@ -232,7 +232,7 @@ This is the version that justifies the "BYO Cloudflare keys + still collaborate"
 - Network path is verified Mesh-only; tcpdump shows no public-internet hops between their nodes.
 
 **Open questions:**
-- Who pays for the coordination service? Options: (a) free hosted with a paid tier, (b) "bring your own Cloudflare account, we deploy the coordinator there for free," (c) federation of community-run coordinators. Leaning (b).
+- Who runs the coordination service? There's no GitFlare business to bill it to, so the options are (a) "bring your own Cloudflare account, the CLI deploys the coordinator there" — the user pays Cloudflare directly, same as everything else — or (b) a federation of community-run coordinators. Leaning (a).
 - How do we handle a coordinator being offline? Each node should still serve its own repos read-only. PRs that span nodes degrade gracefully — "waiting for coordinator" rather than "broken."
 
 ---
@@ -245,7 +245,7 @@ Scope is mostly UX polish + a discovery surface. Not architecturally novel after
 
 ---
 
-### v1.0 — Production-ready, paid tiers
+### v1.0 — Production-ready, fully open source
 
 The point at which we'd stop calling this beta. Hardening, polish, multi-region durability for the metadata layers we own (Artifacts already replicates itself). GitFlare stays fully open source — no hosted product, no paid tier; every user runs it on their own Cloudflare account. The roadmap here depends entirely on what we learn from v0.1–v0.6 so leaving it as a placeholder.
 
@@ -318,7 +318,7 @@ From the Cloudflare docs and the launch blog:
 
 **Operational implications:**
 - A user who runs gitflare fully self-hosted can opt out of the gitflare-managed Mesh org and run their own. They lose drop-in cross-tenant collab with gitflare.dev users, but they get full sovereignty.
-- For the hosted product, we operate the default Mesh org. Users join it on signup. We never see their repo contents; we just operate the policy plane.
+- The default Mesh org is one the project operates as a free convenience so cross-tenant collab works out of the box; joining it is opt-in, and we never see repo contents — only the policy plane.
 
 **What this rules out (deliberately):**
 - We don't need a central reverse proxy fronting every user's repos. Mesh *is* the routing layer.
@@ -329,7 +329,7 @@ From the Cloudflare docs and the launch blog:
 
 - **Vendor lock-in is now extreme.** If Cloudflare ever deprecates or repositions Mesh, the federation story breaks. Mitigation: keep a fallback "public HTTPS + signed-token auth" mode that works without Mesh, for self-hosted users.
 - **Mesh is new (April 2026).** Real-world behavior at scale, latency profile across regions, and policy-eval semantics aren't yet battle-tested in third-party products. We have direct access to the Cloudflare team building these primitives, so this is a manageable risk — we plan a v0.4.5 spike to stress-test Mesh for our exact access patterns and feed any gaps back to them before committing v0.5's architecture.
-- **Pricing.** Mesh is part of Cloudflare One. Free tier covers 50 seats. Beyond that, users pay per seat. We need to model whether GitFlare covers Mesh seats on behalf of users or passes the cost through transparently. Probably the latter — BYO keys means BYO Mesh bill.
+- **Cost to users.** Mesh is part of Cloudflare One. Free tier covers 50 seats. Beyond that, users pay Cloudflare per seat, directly — GitFlare never sits in the billing path, so there's nothing to absorb or pass through. BYO keys means BYO Mesh bill. What we owe users is making that cost legible before they hit it.
 
 ## 7. Things we are deliberately not doing
 
@@ -344,11 +344,11 @@ From the Cloudflare docs and the launch blog:
 ## 8. Open questions to resolve before v0.1 starts
 
 1. **Domain.** Working assumption: `gitflare.dev` for the marketing + onboarding surface. Per-user instances live at `<repo>.<account>.gitflare.dev` (or a custom domain the user brings). Confirm availability and budget.
-2. **Pricing model.** BYO-keys means we don't pay infra. We charge for: hosted coordinator, mirror-sync orchestration, the social-layer database. Per-seat? Per-repo? Flat? Leaning per-seat for hosted, free for self-host.
+2. ~~**Pricing model.**~~ Resolved: **there isn't one.** GitFlare is not being monetized — no hosted tier, no per-seat, no paid coordinator. Every user runs it on their own Cloudflare account and pays Cloudflare directly for what they use. This is a standing constraint on the design, not a placeholder: anything that only works if there's a company collecting revenue behind it doesn't belong in the plan.
 3. ~~**License.**~~ Resolved: **MIT**. GitFlare is and stays fully open source — no plans for a hosted commercial offering or relicensing. Everyone runs it on their own Cloudflare account, on the same terms.
 4. **What "issues mirror" actually shows in v0.1.** Re-render from D1 (highest fidelity, most work), embed GitHub's UI in an iframe (lowest fidelity, fastest), or re-render read-only with link-out for actions (the middle path, currently leaning here).
 5. **Artifacts pricing in GA.** The one primitive in our stack without published pricing. Worth getting an early signal from the Artifacts team given our direct access.
-6. **Token-persistence policy.** §11 commits to "Cloudflare token never persists on gitflare servers" — we should formalize this as a written policy and have it reviewed before launch, since it constrains how the hosted coordinator (v0.4+) can be architected.
+6. **Token-persistence policy.** §11 commits to "Cloudflare token never persists on gitflare servers" — we should formalize this as a written policy and have it reviewed before launch, since it constrains how a shared coordinator (v0.4+) can be architected.
 
 ## 9. Suggested next steps
 
@@ -432,7 +432,7 @@ What the user sees:
 - A live architecture diagram (push → webhook → Artifacts → UI).
 - A live status row: "GitHub: ✓ 200 OK • Cloudflare: ✓ all systems normal • gitflare nodes online: N".
 - One button: **"Mirror a repo →"**
-- Below the fold: how it works, pricing, self-host docs.
+- Below the fold: how it works, what it costs you on Cloudflare, self-host docs.
 
 No newsletter signup, no testimonials, no "trusted by." Visitors here can read code.
 
