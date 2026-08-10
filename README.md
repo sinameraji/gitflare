@@ -20,7 +20,7 @@ GitFlare ships in versions. Each one stands alone — if the next one never gets
 
 | Version | Status | What it does |
 |---|---|---|
-| **v0.1** | ✅ **shipping — you are here** | **Read replica.** One command mirrors a GitHub repo into your Cloudflare account: Artifacts for git storage, a Worker that takes GitHub webhooks + serves a dashboard, file browsing with syntax highlighting, README rendering (images proxied through your Worker), sync status. Optional Cloudflare Access gates the dashboard for private repos. If GitHub is down, reads + clones still work. |
+| **v0.1** | ✅ **shipping — you are here** | **Read replica.** One command mirrors a GitHub repo into your Cloudflare account: Artifacts for git storage, a Worker that takes GitHub webhooks + serves a dashboard, file browsing with syntax highlighting, README rendering (images proxied through your Worker), sync status. Optional Cloudflare Access gates the dashboard for private repos (implemented, not yet live-validated). If GitHub is down, reads + clones still work. |
 | v0.2 | 🧪 Worker deploys live-validated; Pages + D1 pending | **CD that doesn't depend on GitHub.** Push → your Worker deploys to your own account: Workers + Pages (with preview deploys), bindings (vars/KV/R2/D1/DO/services), opt-in D1 migrations, live deploy logs over WebSocket, plus `deploy run` (the GitHub-down escape hatch), `deploy list`, and `deploy rollback`. Deploys **pre-built** artifacts via `.gitflare/deploy.yml`; arbitrary build steps arrive with v0.3 CI. |
 | v0.3 | 🚧 in progress (core CI live-validated) | **Generic CI.** `.gitflare/ci.yml` with jobs / `needs:` / `run:` steps, executed on Cloudflare Sandboxes (full Linux containers on your account) — validated end-to-end: push → sandbox boots → clones → runs your steps with live logs, and a `needs`-gated deploy job ships **what CI just built** (not the stale committed file) to a reachable Worker. Cancel, run history, GitHub commit statuses. Still to come in v0.3: R2 build cache, Browser Run for E2E, a GitHub Actions importer, Pages build artifacts. |
 | v0.4 | 📋 planned | **Multi-user teams.** PRs, reviews, comments — native to GitFlare, bidirectionally mirrored to GitHub. Stacked diffs. "Open PR in sandbox" one-click ephemeral env. |
@@ -29,6 +29,8 @@ GitFlare ships in versions. Each one stands alone — if the next one never gets
 | v1.0 | 📋 someday | **Production-ready, fully open source.** Hardening, polish, multi-region durability. No hosted product, no paid tier — GitFlare stays an MIT CLI you run on your own account. |
 
 ## Try it
+
+You'll need **Node ≥ 20**, a Cloudflare account with **Artifacts beta access**, and a GitHub repo you can install webhooks on.
 
 Install once:
 
@@ -48,15 +50,15 @@ Or pass a repo explicitly:
 gitflare init github.com/<owner>/<repo>
 ```
 
-The CLI walks you through a GitHub PAT + a scoped Cloudflare API token (three account-level permissions, all named), shows you exactly what it's about to provision, and waits for confirmation. After that it imports your repo into Artifacts, deploys a Worker on your account, sets secrets, installs a webhook, and prints the dashboard URL. Step-by-step walkthrough with screenshots in [QUICKSTART.md](./QUICKSTART.md).
+The CLI walks you through a GitHub PAT + a scoped Cloudflare API token (three account-level permissions, all named), shows you exactly what it's about to provision, and waits for confirmation. After that it imports your repo into Artifacts, deploys a Worker on your account, sets secrets, installs a webhook, and prints the dashboard URL. Step-by-step walkthrough in [QUICKSTART.md](./QUICKSTART.md).
 
 GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed CLI; everything it provisions runs on infrastructure you own.
 
 ### Other commands
 
-- `gitflare status` — sync status for the repos you've provisioned.
-- `gitflare access enable` — gate the dashboard + API behind Cloudflare Access SSO (free up to 50 seats on Cloudflare One). Note: this protects the web UI/API; `git clone` from Artifacts isn't gated yet — that's a later version.
-- `gitflare deploy enable` — turn on continuous deploy. Commit a `.gitflare/deploy.yml` and your **pre-built** Worker (or Pages site) ships on every push, straight from your account:
+- `gitflare status` — list the repos you've provisioned, with each one's Worker URL and Artifacts remote. (Live sync state lives on the dashboard, not here.)
+- `gitflare access enable` / `disable` — gate the dashboard + API behind Cloudflare Access SSO (free up to 50 seats on Cloudflare One). Note: this protects the web UI/API; `git clone` from Artifacts isn't gated yet — that's a later version.
+- `gitflare deploy enable` / `disable` — turn on continuous deploy. Commit a `.gitflare/deploy.yml` and your **pre-built** Worker (or Pages site) ships on every push, straight from your account:
 
   ```yaml
   on: push
@@ -83,7 +85,7 @@ GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed
 
   Deploys and their **live logs** show up at `<dashboard-url>/r/<repo>/deployments`.
 
-- `gitflare ci enable` — turn on generic CI (v0.3, requires the Workers Paid plan for Containers). Commit a `.gitflare/ci.yml` and every push runs your jobs in a **Cloudflare Sandbox on your own account** — full Linux, Node 20 + Python 3.11 — no GitHub Actions involved:
+- `gitflare ci enable` / `disable` — turn on generic CI (v0.3, requires the Workers Paid plan for Containers). Commit a `.gitflare/ci.yml` and every push runs your jobs in a **Cloudflare Sandbox on your own account** — a full Linux container with Node + Python preinstalled — no GitHub Actions involved:
 
   ```yaml
   on: push
@@ -103,6 +105,8 @@ GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed
   ```
 
   If a job builds `entry` (e.g. `npm run build`), the deploy ships the freshly built file from the CI workspace, not the committed copy. When `ci.yml` exists, it owns the pipeline — `deploy.yml` no longer runs ungated. Deploy jobs also need `gitflare deploy enable` (that's where the deploy token lives).
+
+  Enabling CI provisions a container, which needs **two more account-level permissions** on your Cloudflare token beyond the three `init` asked for: **Cloudchamber → Edit** *and* **Containers → Edit** (with only one of them the worker uploads fine but the container rollout returns `Forbidden`). Size the runner with `--instance-type <dev|basic|standard-1..4>`; the default is `standard-1`. `ci disable` stops runs but leaves the container config in place — idle containers cost $0.
 
 - `gitflare ci run` / `list` / `cancel` — trigger the pipeline for the current Artifacts HEAD (GitHub-down escape hatch), review runs, or stop a runaway one. Runs + **live logs** stream at `<dashboard-url>/r/<repo>/ci`, and results post back to GitHub as commit statuses (`gitflare/ci`) when GitHub is reachable.
 
@@ -134,15 +138,16 @@ If you just want to talk through an idea, open a Discussion or DM [@sinameraji](
 git push origin main
         │
         ▼
-   github.com ──────► webhook ──────► your Worker ──────► Artifacts (in your account)
-                                                                 │
-                                                                 ▼
-                                                       https://<repo>.<you>.workers.dev
-                                                       (git clone + read-only web UI)
+   github.com ──► webhook ──► your Worker ──────► Artifacts (in your account)
+                                   │                  │
+                                   ▼                  ▼
+                        read-only web UI + API     git clone
 ```
 
-- Your Worker, your Artifacts repo, your D1, your R2 — all on your Cloudflare account.
-- Cloudflare's free tier + $5/month Workers Paid covers a solo developer.
+- The dashboard + JSON API live on the Worker, at `https://gitflare-<owner>--<repo>.<you>.workers.dev`.
+- `git clone` talks to the Artifacts remote directly (`<account-id>.artifacts.cloudflare.net/git/…`) — it does not go through the Worker. The CLI and the dashboard both print the exact URL.
+- Your Worker, your Artifacts repo — both on your Cloudflare account. GitFlare itself provisions nothing else; the KV/R2/D1/DO bindings in `deploy.yml` are resources *you* already own.
+- Cloudflare's free tier + $5/month Workers Paid covers a solo developer through v0.2. v0.3 CI runs Containers, which bill usage on top of that.
 - No server in the loop between you and Cloudflare. We don't have an account to log you into.
 
 ## Repository layout
@@ -152,10 +157,12 @@ gitflare/
 ├── PLAN.md              ← the design doc — read this first
 ├── README.md            ← you are here
 ├── QUICKSTART.md        ← end-to-end provisioning walkthrough
+├── CHANGELOG.md         ← generated by Release Please
 ├── assets/              ← logo, diagrams
+├── .github/             ← workflows + release automation
 └── packages/
     ├── cli/             ← the `gitflare` CLI (Node.js, commander + clack)
-    ├── worker/          ← the Cloudflare Worker — sync pipeline + dashboard
+    ├── worker/          ← the Cloudflare Worker — sync + deploy + CI pipelines, dashboard
     └── shared/          ← shared TypeScript types
 ```
 
