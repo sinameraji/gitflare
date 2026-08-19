@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.5.0...gitflare-v0.6.0) (2026-08-19)
+
+
+### Features
+
+* **cli:** gitflare ci import — GitHub Actions → .gitflare/ci.yml translator with report ([9958ad7](https://github.com/sinameraji/gitflare/commit/9958ad72f2704c9b58ae5fe51bf82ad6eb1c84b4))
+* **cli:** gitflare ci import — translate GitHub Actions workflows into .gitflare/ci.yml with a report ([cb81b7b](https://github.com/sinameraji/gitflare/commit/cb81b7bdd58af3d7143262d097adabe9eaa93311))
+* **worker:** commit log, tag sync + backfill, GitHub health row (Stage 1 completeness, part 1) ([4abc582](https://github.com/sinameraji/gitflare/commit/4abc582056347d2f9bb81f3569c090bf35740a91))
+* **worker:** commit log, tag sync + backfill, GitHub health row (Stage 1 completeness, part 1) ([5011fa9](https://github.com/sinameraji/gitflare/commit/5011fa922e8b4fcd9f1cdd3e7fb89ea8048f7215))
+* **worker:** read-only issues / PRs / releases mirror (Stage 1 completeness, part 2) ([fdb4852](https://github.com/sinameraji/gitflare/commit/fdb4852371a81df5e1ccc88111de3e5f8cc257b1))
+* **worker:** read-only issues / pull requests / releases mirror (Stage 1 completeness, part 2) ([dd70fdd](https://github.com/sinameraji/gitflare/commit/dd70fdd34568245d59f8341d7d936b3a6e27d61a))
+
+
+### Bug Fixes
+
+* **deploy:** push deploys at the pushed sha; 32-hex Pages asset keys (Stage 2 live validation) ([d17a048](https://github.com/sinameraji/gitflare/commit/d17a04894bec3e4cb38a011060e772636304568b))
+* **deploy:** run push deploys at the pushed sha; use 32-hex Pages asset keys ([c93a4f0](https://github.com/sinameraji/gitflare/commit/c93a4f006bff6f513326fd552141908c480fab3a))
+
 ## [0.5.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.4.0...gitflare-v0.5.0) (2026-08-19)
 
 
