@@ -64,7 +64,7 @@ GitFlare itself is free — it's an MIT-licensed CLI, not a hosted service. You 
 
 ## Status
 
-Pre-alpha, built in the open. Shipped: v0.1 read replica, v0.2 continuous deploy, v0.3 core CI (sandbox jobs, `needs`-gated deploys, live logs) and GitHub-down mode (mirror-triggered CI/CD + fast-forward reverse sync to GitHub, `sync` / `remote` commands). Next: the v0.3 remainder (build cache, Browser Run, Actions importer), then team collaboration (v0.4) and cross-tenant federation via Cloudflare Mesh (v0.5). Roadmap and live status: [PLAN.md](https://github.com/sinameraji/gitflare/blob/main/PLAN.md).
+Pre-alpha, built in the open. Shipped: Stage 1 read replica, Stage 2 continuous deploy, Stage 3 core CI (sandbox jobs, `needs`-gated deploys, live logs) and GitHub-down mode (mirror-triggered CI/CD + fast-forward reverse sync to GitHub, `sync` / `remote` commands). Next: the Stage 3 remainder (build cache, Browser Run, Actions importer), then team collaboration (Stage 4) and cross-tenant federation via Cloudflare Mesh (Stage 5). Roadmap and live status: [PLAN.md](https://github.com/sinameraji/gitflare/blob/main/PLAN.md).
 
 ## License
 

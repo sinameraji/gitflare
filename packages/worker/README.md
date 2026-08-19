@@ -6,8 +6,8 @@ The Cloudflare Worker that fronts a single user's GitFlare deployment. One Worke
 
 1. **Receive GitHub webhooks** (`/webhooks/github`), verify the HMAC signature, and on `push` mirror the pushed branch into the user's Artifacts repo.
 2. **Serve the dashboard + JSON API** (Hono JSX, server-rendered): repo overview, file browser with syntax highlighting, README rendering, raw blobs, deployments, CI runs.
-3. **Run continuous deploy** (v0.2): parse `.gitflare/deploy.yml`, upload Workers scripts / Pages sites, apply D1 migrations, stream logs.
-4. **Run generic CI** (v0.3): parse `.gitflare/ci.yml`, execute `run:` jobs in a Cloudflare Sandbox, delegate `needs`-gated deploy jobs, post GitHub commit statuses.
+3. **Run continuous deploy** (Stage 2): parse `.gitflare/deploy.yml`, upload Workers scripts / Pages sites, apply D1 migrations, stream logs.
+4. **Run generic CI** (Stage 3): parse `.gitflare/ci.yml`, execute `run:` jobs in a Cloudflare Sandbox, delegate `needs`-gated deploy jobs, post GitHub commit statuses.
 5. **Optionally gate the UI/API** behind Cloudflare Access (M5).
 6. **GitHub-down mode** (M9): consume the mirror's Artifacts `pushed` events from a Queue, run CI/CD from pushes made straight to the mirror, and push those branches back to GitHub (fast-forward only) from a RepoDO alarm with backoff.
 
