@@ -142,4 +142,66 @@ export class CloudflareClient {
   async deleteAccessApp(accountId: string, appId: string): Promise<void> {
     await this.req("DELETE", `/accounts/${accountId}/access/apps/${appId}`);
   }
+
+  // --- Queues + event subscriptions (M9) ---
+  // Shapes verified live 2026-08-19: queues return {queue_id, queue_name};
+  // subscriptions take source {type:"artifacts.repo", namespace, repo_name}
+  // (snake_case, both required) and destination {type:"queues.queue", queue_id}.
+
+  async listQueues(accountId: string): Promise<Array<{ queue_id: string; queue_name: string }>> {
+    return this.req("GET", `/accounts/${accountId}/queues`);
+  }
+
+  async createQueue(accountId: string, queueName: string): Promise<{ queue_id: string; queue_name: string }> {
+    return this.req("POST", `/accounts/${accountId}/queues`, { queue_name: queueName });
+  }
+
+  async deleteQueue(accountId: string, queueId: string): Promise<void> {
+    await this.req("DELETE", `/accounts/${accountId}/queues/${queueId}`);
+  }
+
+  async listEventSubscriptions(accountId: string): Promise<EventSubscription[]> {
+    return this.req("GET", `/accounts/${accountId}/event_subscriptions/subscriptions`);
+  }
+
+  async createArtifactsPushSubscription(
+    accountId: string,
+    params: { name: string; namespace: string; repoName: string; queueId: string },
+  ): Promise<EventSubscription> {
+    return this.req("POST", `/accounts/${accountId}/event_subscriptions/subscriptions`, {
+      name: params.name,
+      enabled: true,
+      source: { type: "artifacts.repo", namespace: params.namespace, repo_name: params.repoName },
+      destination: { type: "queues.queue", queue_id: params.queueId },
+      events: ["pushed"],
+    });
+  }
+
+  async setEventSubscriptionEnabled(accountId: string, id: string, enabled: boolean): Promise<void> {
+    await this.req("PATCH", `/accounts/${accountId}/event_subscriptions/subscriptions/${id}`, { enabled });
+  }
+
+  async deleteEventSubscription(accountId: string, id: string): Promise<void> {
+    await this.req("DELETE", `/accounts/${accountId}/event_subscriptions/subscriptions/${id}`);
+  }
+
+  // --- Artifacts tokens (REST) ---
+  // {plaintext} carries a "?expires=<unix>" suffix; TTL 60 s … 31 536 000 s.
+
+  async createRepoToken(
+    accountId: string,
+    namespace: string,
+    params: { repo: string; scope: "read" | "write"; ttl: number },
+  ): Promise<{ id: string; plaintext: string; expires_at: string; scope: string }> {
+    return this.req("POST", `/accounts/${accountId}/artifacts/namespaces/${namespace}/tokens`, params);
+  }
+}
+
+export interface EventSubscription {
+  id: string;
+  name: string;
+  enabled: boolean;
+  source: { type: string; namespace?: string; repo_name?: string };
+  destination: { type: string; queue_id?: string };
+  events: string[];
 }

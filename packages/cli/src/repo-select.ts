@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import kleur from "kleur";
 import type { LocalConfig } from "./config.js";
+import type { CloudflareClient } from "./cloudflare.js";
 
 export type RepoEntry = LocalConfig["repos"][number];
 
@@ -33,6 +34,17 @@ export async function pickRepo(
   });
   if (p.isCancel(choice)) return undefined;
   return cfg.repos.find((r) => r.githubFullName === choice);
+}
+
+/** The repo's Artifacts clone URL (REPO_MAP needs it on every redeploy). */
+export async function fetchRemote(cf: CloudflareClient, entry: RepoEntry): Promise<string | undefined> {
+  try {
+    const r = await cf.getRepo(entry.cloudflareAccountId, entry.artifactsNamespace, entry.artifactsRepoName);
+    return r.remote;
+  } catch (e) {
+    p.log.error(`Artifacts remote lookup failed: ${(e as Error).message}`);
+    return undefined;
+  }
 }
 
 /** Reuse the saved Cloudflare token, or prompt for one. */

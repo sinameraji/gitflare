@@ -30,8 +30,24 @@ export class GitHubClient {
   async getRepo(
     owner: string,
     repo: string,
-  ): Promise<{ default_branch: string; private: boolean; clone_url: string }> {
+  ): Promise<{
+    default_branch: string;
+    private: boolean;
+    clone_url: string;
+    permissions?: { admin?: boolean; push?: boolean; pull?: boolean };
+  }> {
     return this.req("GET", `/repos/${owner}/${repo}`);
+  }
+
+  /** Branch protection for `branch`: null when none (404) or not visible (403). */
+  async getBranchProtection(owner: string, repo: string, branch: string): Promise<unknown | null> {
+    try {
+      return await this.req("GET", `/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (/→ (404|403)/.test(msg)) return null;
+      throw e;
+    }
   }
 
   async listHooks(owner: string, repo: string): Promise<Array<{ id: number; config: { url?: string } }>> {
