@@ -40,6 +40,15 @@ export interface Env {
   // the Sandbox container provisioned so re-enable never needs a migration.
   CI_ENABLED?: string;
 
+  // "1" when `gitflare sync enable` is active (M9). Gates the alarm-driven
+  // reverse pushes (Artifacts → GitHub); explicit `gitflare sync now` runs
+  // regardless. The queue consumer only exists once sync is provisioned.
+  SYNC_ENABLED?: string;
+  // The Worker's own public URL (set by the CLI at deploy time) — needed by
+  // the queue consumer, which has no incoming request to derive an origin
+  // from, to build the commit-status target URL.
+  WORKER_URL?: string;
+
   // Bindings
   ARTIFACTS: ArtifactsNamespace;
   REPO: DurableObjectNamespace;
@@ -56,6 +65,18 @@ export function parseRepoMap(env: Env): RepoMap {
   } catch {
     return {};
   }
+}
+
+/** Reverse lookup: an Artifacts repo name → its REPO_MAP entry + GitHub full_name. */
+export function lookupByArtifactsName(
+  env: Env,
+  artifactsName: string,
+): { githubFullName: string; name: string; remote: string } | undefined {
+  const map = parseRepoMap(env);
+  for (const [github, entry] of Object.entries(map)) {
+    if (entry.name === artifactsName) return { githubFullName: github, ...entry };
+  }
+  return undefined;
 }
 
 export function lookupArtifactsRepoEntry(

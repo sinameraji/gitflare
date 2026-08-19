@@ -6,6 +6,7 @@ import { tokenSecret, type ArtifactsRepo } from "../types";
 // LightningFS-compatible fs; we use a minimal in-memory implementation that
 // supports the operations isomorphic-git calls during fetch + push.
 import { MemFs } from "./memfs";
+import { deepenUntilReachable } from "../artifacts/content";
 
 export interface SyncParams {
   githubFullName: string;          // "owner/repo"
@@ -54,6 +55,10 @@ export async function syncGithubToArtifacts(
   // remote + refspec internally so we don't hit the "no fetch refspec"
   // error that bare init+fetch produces. depth covers the delta with
   // headroom; for new branches we go deeper.
+  const githubAuth = (): { username: string; password: string } => ({
+    username: "x-access-token",
+    password: params.githubToken,
+  });
   await git.clone({
     fs,
     http,
@@ -64,11 +69,25 @@ export async function syncGithubToArtifacts(
     depth: isNewBranch ? 200 : 50,
     noCheckout: true,
     noTags: false,
-    onAuth: () => ({
-      username: "x-access-token",
-      password: params.githubToken,
-    }),
+    onAuth: githubAuth,
   });
+  // The mirror's current tip is `beforeSha` (what GitHub had before this
+  // push). isomorphic-git judges fast-forward-ness from LOCAL history, so if
+  // a single push carries more commits than the shallow window (or the
+  // webhook's `before` is far behind), the base commit sits outside the
+  // window and the push is misreported as not-fast-forward. Deepen until it
+  // is inside. Not reachable at all = a genuine divergence (e.g. a force
+  // push on GitHub) and the push below fails honestly with force:false.
+  if (!isNewBranch) {
+    await deepenUntilReachable({
+      fs,
+      dir,
+      url: githubUrl,
+      ref: branchName,
+      anchors: [params.beforeSha],
+      onAuth: githubAuth,
+    });
+  }
 
   const tokenResult = (await params.artifactsRepo.createToken("write", 600)) as {
     plaintext?: string;

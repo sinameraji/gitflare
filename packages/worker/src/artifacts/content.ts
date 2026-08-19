@@ -281,12 +281,64 @@ export async function mintReadPassword(repo: ArtifactsRepo, ttlSeconds: number):
  * path so workflow + entry files are read strictly AT the delegated sha —
  * never at whatever HEAD happens to be by the time we clone.
  */
-export async function cloneRepoAtRef(
+/**
+ * Deepen an existing shallow clone until at least one of `anchors` is a
+ * readable commit, trying successively larger depths. Returns the first
+ * anchor found, or null if none is reachable even at the largest depth.
+ *
+ * Why this exists: isomorphic-git decides fast-forward-ness by walking the
+ * LOCAL history. Inside a shallow clone that walk stops at the shallow
+ * boundary, so a genuine fast-forward whose base commit sits outside the
+ * window is misreported as `not-fast-forward`. Every push path therefore
+ * deepens until the remote's current tip (the anchor) is inside the window.
+ */
+export async function deepenUntilReachable(params: {
+  fs: MemFs;
+  dir: string;
+  url: string;
+  ref: string;
+  anchors: string[];
+  onAuth: () => { username: string; password: string };
+  depths?: number[];
+}): Promise<string | null> {
+  const { fs, dir, url, ref, onAuth } = params;
+  const anchors = params.anchors.filter((a) => /^[0-9a-f]{40}$/.test(a));
+  if (anchors.length === 0) return null;
+  const firstReachable = async (): Promise<string | null> => {
+    for (const oid of anchors) {
+      try {
+        await git.readCommit({ fs, dir, oid });
+        return oid;
+      } catch {
+        // keep looking
+      }
+    }
+    return null;
+  };
+  let found = await firstReachable();
+  if (found) return found;
+  for (const depth of params.depths ?? [500, 100000]) {
+    await git.fetch({ fs, http, dir, url, ref, depth, singleBranch: true, onAuth });
+    found = await firstReachable();
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Clone `branch` from an Artifacts repo just deep enough that one of the
+ * `anchors` (commit shas) is inside the history window. `reached` is the
+ * anchor that was found, or null when none is reachable at full depth —
+ * callers decide whether that is an error (a sha that must exist on the
+ * branch) or a verdict (a remote tip that is not an ancestor → conflict).
+ */
+export async function cloneBranchReaching(
   repo: ArtifactsRepo,
   remote: string,
   branch: string,
-  sha: string,
-): Promise<ShallowRepo> {
+  anchors: string[],
+  opts: { initialDepth?: number } = {},
+): Promise<ShallowRepo & { reached: string | null }> {
   const password = await mintReadPassword(repo, 180);
   const fs = new MemFs();
   const dir = "/repo";
@@ -299,31 +351,27 @@ export async function cloneRepoAtRef(
     url: remote,
     ref: branch,
     singleBranch: true,
-    depth: 50,
+    depth: opts.initialDepth ?? 50,
     noCheckout: true,
     noTags: true,
     onAuth,
   });
+  const headSha = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
+  const reached = await deepenUntilReachable({ fs, dir, url: remote, ref: branch, anchors, onAuth });
+  return { fs, dir, headSha, branchName: branch, reached };
+}
 
-  const hasCommit = async (): Promise<boolean> => {
-    try {
-      await git.readCommit({ fs, dir, oid: sha });
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  if (!(await hasCommit())) {
-    for (const depth of [500, 100000]) {
-      await git.fetch({ fs, http, dir, url: remote, ref: branch, depth, singleBranch: true, onAuth });
-      if (await hasCommit()) break;
-    }
-    if (!(await hasCommit())) {
-      throw new Error(`commit ${sha.slice(0, 8)} not reachable on ${branch}`);
-    }
+export async function cloneRepoAtRef(
+  repo: ArtifactsRepo,
+  remote: string,
+  branch: string,
+  sha: string,
+): Promise<ShallowRepo> {
+  const cloned = await cloneBranchReaching(repo, remote, branch, [sha]);
+  if (cloned.reached !== sha) {
+    throw new Error(`commit ${sha.slice(0, 8)} not reachable on ${branch}`);
   }
-  return { fs, dir, headSha: sha, branchName: branch };
+  return { fs: cloned.fs, dir: cloned.dir, headSha: sha, branchName: branch };
 }
 
 /**
