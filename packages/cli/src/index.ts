@@ -5,6 +5,7 @@ import { runInit } from "./commands/init.js";
 import { runStatus } from "./commands/status.js";
 import { runAccessEnable, runAccessDisable } from "./commands/access.js";
 import { runSyncEnable, runSyncDisable, runSyncNow, runSyncStatus } from "./commands/sync.js";
+import { runRemoteAdd, runRemoteRemove, runCredentialHelper } from "./commands/remote.js";
 import {
   runDeployEnable,
   runDeployDisable,
@@ -132,5 +133,24 @@ sync.command("status")
   .description("Show per-branch sync state in both directions")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
   .action(runSyncStatus);
+
+const remote = program
+  .command("remote")
+  .description("Make `git push` fan out to GitHub AND your Artifacts mirror (opt-in, per checkout)");
+remote.command("add")
+  .description("Add the mirror as a second pushurl on origin + a credential helper that mints short-lived tokens")
+  .argument("[repo]", "github full name or artifacts repo name; defaults to the checkout's origin")
+  .action(runRemoteAdd);
+remote.command("remove")
+  .description("Undo `remote add` for this checkout")
+  .argument("[repo]", "github full name or artifacts repo name; defaults to the checkout's origin")
+  .action(runRemoteRemove);
+
+// git credential helper (installed by `remote add`; not for humans)
+program
+  .command("credential", { hidden: true })
+  .argument("<op>", "get | store | erase")
+  .option("--repo <name>", "artifacts repo name")
+  .action(runCredentialHelper);
 
 program.parseAsync(process.argv);
