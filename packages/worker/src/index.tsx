@@ -5,7 +5,9 @@ import { dispatchPush } from "./pipeline/dispatch";
 import { handleQueue } from "./events/consumer";
 import { repoStubFor } from "./durable-objects/repo";
 import { listArtifactsRefs } from "./artifacts/refs";
-import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt } from "./artifacts/content";
+import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt, listCommits } from "./artifacts/content";
+import { Commits } from "./ui/commits";
+import { probeGithub } from "./github/health";
 import { Browse } from "./ui/browse";
 import { Home, type HomeRepo } from "./ui/home";
 import { Deployments } from "./ui/deployments";
@@ -38,6 +40,7 @@ app.get("/health", (c) =>
 app.get("/", async (c) => {
   const repoMap = parseRepoMap(c.env);
   const repos: HomeRepo[] = [];
+  const github = await probeGithub();
   for (const [github, entry] of Object.entries(repoMap)) {
     const r: HomeRepo = {
       githubFullName: github,
@@ -66,16 +69,21 @@ app.get("/", async (c) => {
       const stub = repoStubFor(c.env, entry.name);
       const resp = await stub.fetch("https://repo-do/state");
       if (resp.ok) {
-        const j = (await resp.json()) as { refs: HomeRepo["syncedRefs"]; reverse?: HomeRepo["reverseRefs"] };
+        const j = (await resp.json()) as {
+          refs: HomeRepo["syncedRefs"];
+          reverse?: HomeRepo["reverseRefs"];
+          tagBackfill?: HomeRepo["tagBackfill"];
+        };
         r.syncedRefs = j.refs;
         r.reverseRefs = j.reverse ?? [];
+        r.tagBackfill = j.tagBackfill ?? null;
       }
     } catch {
       // Soft fail.
     }
     repos.push(r);
   }
-  return c.html(<Home repos={repos} version={c.env.GITFLARE_VERSION ?? "0.0.0"} />);
+  return c.html(<Home repos={repos} version={c.env.GITFLARE_VERSION ?? "0.0.0"} github={github} />);
 });
 
 // Look up an artifacts repo name → its REPO_MAP entry + github full_name.
@@ -186,6 +194,35 @@ app.get("/r/:name/blob/*", async (c) => {
 // Raw blob proxy — serves file bytes straight from the Artifacts mirror. Used
 // for README images so they render for private repos and survive GitHub
 // outages. Under /r/* so the Access guard already covers it.
+app.get("/r/:name/commits", async (c) => {
+  const name = c.req.param("name");
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return c.html(<NotFound title="Unknown repo" detail={`No mirror named ${name}.`} />, 404);
+  try {
+    const handle = await c.env.ARTIFACTS.get(repo.name);
+    const refs = await listArtifactsRefs(handle, repo.remote);
+    const branches = refs.filter((r) => r.ref.startsWith("refs/heads/")).map((r) => r.ref.slice("refs/heads/".length));
+    const defaultBranch = refs.find((r) => r.isDefault && r.ref.startsWith("refs/heads/"))?.ref.slice("refs/heads/".length) ?? branches[0] ?? "main";
+    const wanted = c.req.query("ref");
+    const branch = wanted && branches.includes(wanted) ? wanted : defaultBranch;
+    const limit = 100;
+    const { commits, headSha } = await listCommits(handle, repo.remote, branch, limit);
+    return c.html(
+      <Commits
+        githubFullName={repo.githubFullName}
+        artifactsRepoName={repo.name}
+        branch={branch}
+        branches={[defaultBranch, ...branches.filter((b) => b !== defaultBranch)]}
+        headSha={headSha}
+        commits={commits}
+        limit={limit}
+      />,
+    );
+  } catch (err) {
+    return c.html(<ErrorView detail={(err as Error).message} backHref={`/r/${name}/tree/`} />, 500);
+  }
+});
+
 app.get("/r/:name/raw/*", async (c) => {
   const name = c.req.param("name");
   const repo = findRepoByArtifactsName(c.env, name);
@@ -458,6 +495,19 @@ app.post("/control/sync/reverse", async (c) => {
   return c.json((await resp.json()) as object, resp.ok ? 202 : 500);
 });
 
+app.post("/control/sync/tags", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const { repo } = (await c.req.json().catch(() => ({}))) as { repo?: string };
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = repoStubFor(c.env, entry.name);
+  const resp = await stub.fetch("https://repo-do/sync-tags", {
+    method: "POST",
+    body: JSON.stringify({ githubFullName: entry.githubFullName, artifactsRepoName: entry.name, remote: entry.remote }),
+  });
+  return c.json((await resp.json()) as object, resp.status === 202 ? 202 : 500);
+});
+
 app.get("/control/sync/state", async (c) => {
   if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
   const repo = c.req.query("repo");
@@ -499,13 +549,6 @@ app.post("/webhooks/github", async (c) => {
       return c.json({ accepted: true, skipped: "branch-delete" }, 202);
     }
 
-    // Only branch pushes drive sync + CD/CI. Tag pushes (refs/tags/*) and other
-    // non-branch refs would otherwise mint failed CI runs and red commit
-    // statuses (branchOf() leaves them unmatched by any workflow branch list).
-    if (!payload.ref.startsWith("refs/heads/")) {
-      return c.json({ accepted: true, skipped: "non-branch-ref" }, 202);
-    }
-
     const entry = lookupArtifactsRepoEntry(
       c.env,
       payload.repository.full_name,
@@ -515,6 +558,30 @@ app.post("/webhooks/github", async (c) => {
         { error: "unknown repo", github: payload.repository.full_name },
         404,
       );
+    }
+
+    // Tag pushes are mirrored (tag only — no CI/CD dispatch: branchOf() would
+    // leave them unmatched by any workflow and mint red statuses). Deletes were
+    // handled above (never propagated).
+    if (payload.ref.startsWith("refs/tags/")) {
+      const tag = payload.ref.slice("refs/tags/".length);
+      c.executionCtx.waitUntil(
+        repoStubFor(c.env, entry.name).fetch("https://repo-do/sync-tag", {
+          method: "POST",
+          body: JSON.stringify({
+            githubFullName: payload.repository.full_name,
+            artifactsRepoName: entry.name,
+            remote: entry.remote,
+            tag,
+            sha: payload.after,
+          }),
+        }),
+      );
+      return c.json({ accepted: true, tag }, 202);
+    }
+    // Only branch pushes drive sync + CD/CI.
+    if (!payload.ref.startsWith("refs/heads/")) {
+      return c.json({ accepted: true, skipped: "non-branch-ref" }, 202);
     }
 
     // Respond to GitHub immediately and do the (potentially multi-second) sync

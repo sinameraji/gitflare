@@ -1,7 +1,7 @@
 import * as git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { MemFs } from "../sync/memfs";
-import { tokenSecret, type ArtifactsRepo } from "../types";
+import { tokenSecret, type ArtifactsRepo, type ArtifactsLogEntry } from "../types";
 
 export interface TreeEntry {
   path: string;
@@ -471,4 +471,84 @@ export async function getRepoContent(
     totalBytes,
     ...(readme ? { readme } : {}),
   };
+}
+
+export interface CommitSummary {
+  sha: string;
+  message: string; // first line
+  body: string; // rest, may be ""
+  author: { name: string; email: string; timestamp: number };
+  parents: string[];
+}
+
+/** Normalise whatever shape the binding's log() returns into entries. */
+export function parseArtifactsLog(raw: unknown): ArtifactsLogEntry[] | null {
+  const arr = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object"
+      ? ((raw as { result?: unknown; commits?: unknown }).result ?? (raw as { commits?: unknown }).commits)
+      : null;
+  if (!Array.isArray(arr)) return null;
+  const out: ArtifactsLogEntry[] = [];
+  for (const e of arr as Array<Record<string, unknown>>) {
+    if (!e || typeof e.hash !== "string" || typeof e.message !== "string") return null;
+    const author = (e.author ?? {}) as { name?: string; email?: string };
+    out.push({
+      hash: e.hash,
+      message: e.message,
+      author: { name: author.name ?? "", email: author.email ?? "" },
+      parents: Array.isArray(e.parents) ? (e.parents as string[]) : [],
+      authoredAt: typeof e.authoredAt === "number" ? e.authoredAt : typeof e.committedAt === "number" ? e.committedAt : 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * The most recent `limit` commits on `branch`. Prefers the Artifacts binding's
+ * server-side `log()` (no clone, ~100 ms); falls back to a shallow clone of
+ * exactly that depth + isomorphic-git `log` if the binding can't answer.
+ */
+export async function listCommits(
+  repo: ArtifactsRepo,
+  remote: string,
+  branch: string,
+  limit = 100,
+): Promise<{ commits: CommitSummary[]; headSha: string; via: "binding" | "clone" }> {
+  if (typeof repo.log === "function") {
+    try {
+      const entries = parseArtifactsLog(await repo.log({ ref: branch, limit }));
+      if (entries && entries.length > 0) {
+        return {
+          via: "binding",
+          headSha: entries[0]!.hash,
+          commits: entries.map((e) => {
+            const [first, ...rest] = e.message.split("\n");
+            return {
+              sha: e.hash,
+              message: (first ?? "").trim(),
+              body: rest.join("\n").trim(),
+              author: { name: e.author.name, email: e.author.email, timestamp: e.authoredAt * 1000 },
+              parents: e.parents,
+            };
+          }),
+        };
+      }
+    } catch {
+      // fall through to the clone path
+    }
+  }
+  const cloned = await cloneBranchReaching(repo, remote, branch, [], { initialDepth: limit });
+  const log = await git.log({ fs: cloned.fs, dir: cloned.dir, ref: `refs/heads/${branch}`, depth: limit });
+  const commits: CommitSummary[] = log.map((e) => {
+    const [first, ...rest] = e.commit.message.split("\n");
+    return {
+      sha: e.oid,
+      message: (first ?? "").trim(),
+      body: rest.join("\n").trim(),
+      author: { name: e.commit.author.name, email: e.commit.author.email, timestamp: e.commit.author.timestamp * 1000 },
+      parents: e.commit.parent,
+    };
+  });
+  return { commits, headSha: cloned.headSha, via: "clone" };
 }

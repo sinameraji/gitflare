@@ -296,6 +296,31 @@ export async function runSyncNow(repoArg: string | undefined, opts: { ref?: stri
   p.outro(`The Worker pushes them now (fast-forward only). Status: ${kleur.cyan("gitflare sync status")} or ${kleur.cyan(entry.workerUrl)}`);
 }
 
+export async function runSyncTags(repoArg: string | undefined): Promise<void> {
+  p.intro(kleur.bold(orange("GitFlare sync tags")));
+  const cfg = await loadConfig();
+  const entry = await pickRepo(cfg, repoArg);
+  if (!entry) return;
+  const secret = controlSecretFor(entry);
+  if (!secret) return;
+  const sp = p.spinner();
+  sp.start("Asking the Worker to mirror every GitHub tag the mirror is missing");
+  try {
+    const res = await controlFetch(entry, secret, "/control/sync/tags", { method: "POST", body: { repo: entry.artifactsRepoName } });
+    if (res.status !== 202) {
+      sp.stop("Request failed");
+      p.log.error(`${res.status}: ${await res.text()}`);
+      return;
+    }
+    sp.stop("Tag backfill started on the Worker (one push per tag — a few hundred tags take a minute or two)");
+  } catch (e) {
+    sp.stop("Request failed");
+    p.log.error((e as Error).message);
+    return;
+  }
+  p.outro(`Progress: the Tags section on ${kleur.cyan(entry.workerUrl)}, or ${kleur.cyan("gitflare sync status")}. New tags pushed to GitHub sync automatically from now on.`);
+}
+
 interface SyncStateResponse {
   refs: Array<{ ref: string; sha: string; syncedAt: number; source?: string; forwardError?: string }>;
   reverse: Array<{
@@ -307,6 +332,7 @@ interface SyncStateResponse {
     syncedAt?: number;
     githubSha?: string;
   }>;
+  tagBackfill?: { status: string; pushed?: number; alreadyPresent?: number; conflicts?: string[]; error?: string; finishedAt?: number } | null;
 }
 
 export async function runSyncStatus(repoArg: string | undefined): Promise<void> {
@@ -336,10 +362,18 @@ export async function runSyncStatus(repoArg: string | undefined): Promise<void> 
   }
 
   const rev = new Map(state.reverse.map((r) => [r.ref, r]));
+  const branches = state.refs.filter((r) => r.ref.startsWith("refs/heads/"));
+  const tags = state.refs.filter((r) => r.ref.startsWith("refs/tags/"));
   if (state.refs.length === 0) {
     p.log.message("No refs synced yet.");
   }
-  for (const r of state.refs) {
+  if (tags.length || state.tagBackfill) {
+    const tb = state.tagBackfill;
+    p.log.message(
+      `${kleur.cyan("tags")}: ${tags.length} synced${tb ? kleur.gray(` — last backfill ${tb.status}${tb.pushed !== undefined ? `, pushed ${tb.pushed}, already present ${tb.alreadyPresent ?? 0}` : ""}${tb.conflicts?.length ? `, ${tb.conflicts.length} conflict(s)` : ""}${tb.error ? `, error: ${tb.error}` : ""}`) : ""}`,
+    );
+  }
+  for (const r of branches) {
     const name = r.ref.replace(/^refs\/heads\//, "");
     const fwd = r.syncedAt ? `${ago(r.syncedAt)}${r.source === "artifacts" ? " (pushed to mirror)" : ""}` : "import seed";
     const rv = rev.get(r.ref);

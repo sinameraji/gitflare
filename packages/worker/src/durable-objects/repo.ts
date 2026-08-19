@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { syncGithubToArtifacts } from "../sync/git-sync";
+import { syncGithubToArtifacts, syncTagGithubToArtifacts, syncAllTagsGithubToArtifacts } from "../sync/git-sync";
 import {
   applyReverseResult,
   isDue,
@@ -33,6 +33,25 @@ interface SyncRequest {
   ref: string;
   beforeSha: string;
   afterSha: string;
+}
+
+interface TagSyncRequest {
+  githubFullName: string;
+  artifactsRepoName: string;
+  remote: string;
+  tag: string; // bare name, e.g. "v1.2.3"
+  sha: string;
+}
+
+export interface TagBackfillState {
+  status: "running" | "done" | "failed";
+  startedAt: number;
+  finishedAt?: number | undefined;
+  pushed?: number | undefined;
+  alreadyPresent?: number | undefined;
+  conflicts?: string[] | undefined;
+  failed?: Array<{ ref: string; error: string }> | undefined;
+  error?: string | undefined;
 }
 
 export interface SyncResponse {
@@ -106,9 +125,37 @@ export class RepoDO {
       const body = (await request.json()) as ReverseNowRequest;
       return Response.json(await this.handleReverseNow(body));
     }
+    if (request.method === "POST" && url.pathname === "/sync-tag") {
+      const body = (await request.json()) as TagSyncRequest;
+      try {
+        const result = await this.serialize(() => this.runTagSync(body));
+        return Response.json(result);
+      } catch (err) {
+        return Response.json({ ok: false, error: (err as Error).message }, { status: 500 });
+      }
+    }
+    if (request.method === "POST" && url.pathname === "/sync-tags") {
+      // Backfill every missing tag; answers 202 and runs detached (145 tags on
+      // a real repo take tens of seconds — one push per tag).
+      const body = (await request.json()) as Omit<TagSyncRequest, "tag" | "sha">;
+      const now = Date.now();
+      await this.state.storage.put<TagBackfillState>("tagBackfill", { status: "running", startedAt: now });
+      void this.serialize(() => this.runTagBackfill(body));
+      return Response.json({ accepted: true }, { status: 202 });
+    }
     if (request.method === "GET" && url.pathname === "/state") {
-      const [refs, reverse] = await Promise.all([this.allRefs(), this.allReverse()]);
-      return Response.json({ refs, reverse });
+      const [refs, reverse, tagBackfill] = await Promise.all([
+        this.allRefs(),
+        this.allReverse(),
+        this.state.storage.get<TagBackfillState>("tagBackfill"),
+      ]);
+      // Detached work dies with the DO instance (e.g. on redeploy); a "running"
+      // backfill older than 30 min is reported as interrupted, not running.
+      const tb =
+        tagBackfill && tagBackfill.status === "running" && Date.now() - tagBackfill.startedAt > 30 * 60_000
+          ? { ...tagBackfill, status: "failed" as const, error: "interrupted (Worker restarted?) — run `gitflare sync tags` again" }
+          : tagBackfill ?? null;
+      return Response.json({ refs, reverse, tagBackfill: tb });
     }
     return new Response("not found", { status: 404 });
   }
@@ -196,6 +243,61 @@ export class RepoDO {
       throw err;
     } finally {
       await this.state.storage.delete(`outbound:${req.ref}`);
+    }
+  }
+
+  // -- tags: GitHub → Artifacts -----------------------------------------------
+
+  private async runTagSync(req: TagSyncRequest): Promise<{ ok: boolean; sha?: string | undefined; skipped?: string | undefined }> {
+    const artifactsRepo = await this.env.ARTIFACTS.get(req.artifactsRepoName);
+    const r = await syncTagGithubToArtifacts({
+      githubFullName: req.githubFullName,
+      githubToken: this.env.GITHUB_TOKEN,
+      artifactsRepo,
+      remote: req.remote,
+      tag: req.tag,
+    });
+    if (r.ok && r.sha) {
+      await this.state.storage.put<RefState>(`ref:refs/tags/${req.tag}`, {
+        ref: `refs/tags/${req.tag}`,
+        sha: r.sha,
+        syncedAt: Date.now(),
+        source: "github",
+      });
+    }
+    return { ok: r.ok, sha: r.sha, skipped: r.skipped };
+  }
+
+  private async runTagBackfill(req: Omit<TagSyncRequest, "tag" | "sha">): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      const artifactsRepo = await this.env.ARTIFACTS.get(req.artifactsRepoName);
+      const r = await syncAllTagsGithubToArtifacts({
+        githubFullName: req.githubFullName,
+        githubToken: this.env.GITHUB_TOKEN,
+        artifactsRepo,
+        remote: req.remote,
+      });
+      const now = Date.now();
+      for (const t of r.pushed) {
+        await this.state.storage.put<RefState>(`ref:${t.ref}`, { ref: t.ref, sha: t.oid, syncedAt: now, source: "github" });
+      }
+      await this.state.storage.put<TagBackfillState>("tagBackfill", {
+        status: "done",
+        startedAt,
+        finishedAt: now,
+        pushed: r.pushed.length,
+        alreadyPresent: r.alreadyPresent,
+        conflicts: r.conflicts,
+        failed: r.failed,
+      });
+    } catch (err) {
+      await this.state.storage.put<TagBackfillState>("tagBackfill", {
+        status: "failed",
+        startedAt,
+        finishedAt: Date.now(),
+        error: (err as Error).message,
+      });
     }
   }
 
