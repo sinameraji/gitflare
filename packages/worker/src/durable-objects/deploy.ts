@@ -284,11 +284,21 @@ export class DeployDO {
       }
     }
 
-    // Clone first so a manual run (empty ref/sha — the GitHub-down escape hatch)
-    // can learn the current default branch + tip from Artifacts directly.
+    // Push-like runs read the workflow AND the files strictly at the pushed
+    // ref+sha (ref-aware clone — feature branches, previews, and raced HEADs
+    // included). Before this, the push path cloned the DEFAULT branch, so a
+    // deploy.yml on any other branch was invisible ("no .gitflare/deploy.yml")
+    // and Pages previews from feature branches could never work; a manual run
+    // (empty ref/sha — the GitHub-down escape hatch) still learns the current
+    // default branch + tip from Artifacts directly.
     let shallow: ShallowRepo;
     try {
-      shallow = await cloneRepoShallow(await this.env.ARTIFACTS.get(req.artifactsRepoName), req.remote);
+      const handle = await this.env.ARTIFACTS.get(req.artifactsRepoName);
+      if (isPushLikeMode(mode) && req.ref && /^[0-9a-f]{40}$/.test(req.sha)) {
+        shallow = await cloneRepoAtRef(handle, req.remote, branchOf(req.ref), req.sha);
+      } else {
+        shallow = await cloneRepoShallow(handle, req.remote);
+      }
     } catch (e) {
       const rec = await this.begin(req.ref || "refs/heads/?", req.sha || "0".repeat(40), mode);
       return this.finish(rec, "failed", `clone failed: ${(e as Error).message}`);

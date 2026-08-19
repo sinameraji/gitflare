@@ -114,4 +114,14 @@ describe("hashPagesFiles", () => {
     ]);
     expect(same.manifest["/a.txt"]).toBe(same.manifest["/b.txt"]);
   });
+  it("emits 32-hex asset keys that depend on the extension (Pages serves 500 on any other key length — verified live)", async () => {
+    const enc = new TextEncoder();
+    const bytes = enc.encode("<h1>hi</h1>");
+    const { manifest } = await hashPagesFiles([
+      { path: "index.html", bytes, contentType: "text/html" },
+      { path: "index.txt", bytes, contentType: "text/plain" },
+    ]);
+    for (const k of Object.values(manifest)) expect(k).toMatch(/^[0-9a-f]{32}$/);
+    expect(manifest["/index.html"]).not.toBe(manifest["/index.txt"]);
+  });
 });
