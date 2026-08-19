@@ -22,7 +22,7 @@ GitFlare ships in versions. Each one stands alone — if the next one never gets
 |---|---|---|
 | **v0.1** | ✅ **shipping — you are here** | **Read replica.** One command mirrors a GitHub repo into your Cloudflare account: Artifacts for git storage, a Worker that takes GitHub webhooks + serves a dashboard, file browsing with syntax highlighting, README rendering (images proxied through your Worker), sync status. Optional Cloudflare Access gates the dashboard for private repos (implemented, not yet live-validated). If GitHub is down, reads + clones still work. |
 | v0.2 | 🧪 Worker deploys live-validated; Pages + D1 pending | **CD that doesn't depend on GitHub.** Push → your Worker deploys to your own account: Workers + Pages (with preview deploys), bindings (vars/KV/R2/D1/DO/services), opt-in D1 migrations, live deploy logs over WebSocket, plus `deploy run` (the GitHub-down escape hatch), `deploy list`, and `deploy rollback`. Deploys **pre-built** artifacts via `.gitflare/deploy.yml`; arbitrary build steps arrive with v0.3 CI. |
-| v0.3 | 🚧 in progress (core CI live-validated) | **Generic CI.** `.gitflare/ci.yml` with jobs / `needs:` / `run:` steps, executed on Cloudflare Sandboxes (full Linux containers on your account) — validated end-to-end: push → sandbox boots → clones → runs your steps with live logs, and a `needs`-gated deploy job ships **what CI just built** (not the stale committed file) to a reachable Worker. Cancel, run history, GitHub commit statuses. **Next up (M9): "GitHub-down mode is real"** — pushes to your Artifacts mirror trigger CI/CD automatically (Artifacts events → a Queue on your account), and branch refs sync back to GitHub when it's reachable again, so the mirror-forever loop closes both ways. Still to come after that: R2 build cache, Browser Run for E2E, a GitHub Actions importer, Pages build artifacts. |
+| v0.3 | 🚧 in progress (core CI live-validated) | **Generic CI.** `.gitflare/ci.yml` with jobs / `needs:` / `run:` steps, executed on Cloudflare Sandboxes (full Linux containers on your account) — validated end-to-end: push → sandbox boots → clones → runs your steps with live logs, and a `needs`-gated deploy job ships **what CI just built** (not the stale committed file) to a reachable Worker. Cancel, run history, GitHub commit statuses. **GitHub-down mode (M9, live-validated 2026-08-19):** `gitflare sync enable` makes pushes straight to your Artifacts mirror trigger CI/CD (Artifacts events → a Queue on your account) and pushes them back to GitHub, fast-forward only, once GitHub is reachable; `gitflare remote add` makes one `git push` reach both. Still to come: R2 build cache, Browser Run for E2E, a GitHub Actions importer, Pages build artifacts. |
 | v0.4 | 📋 planned | **Multi-user teams.** PRs, reviews, comments — native to GitFlare, bidirectionally mirrored to GitHub. Stacked diffs. "Open PR in sandbox" one-click ephemeral env. |
 | v0.5 | 📋 planned | **Cross-tenant collaboration via Cloudflare Mesh.** Alice and Bob on separate Cloudflare accounts; private repos served Mesh-only with per-identity policies instead of SSH keys. |
 | v0.6 | 📋 planned | **Public repos + discovery.** A real code browser for the public web, search, forks across accounts. |
@@ -110,12 +110,16 @@ GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed
 
 - `gitflare ci run` / `list` / `cancel` — trigger the pipeline for the current Artifacts HEAD (GitHub-down escape hatch), review runs, or stop a runaway one. Runs + **live logs** stream at `<dashboard-url>/r/<repo>/ci`, and results post back to GitHub as commit statuses (`gitflare/ci`) when GitHub is reachable.
 
+- `gitflare sync enable` / `disable [--purge]` — **GitHub-down mode.** Provisions, on your account, a Queue plus an Artifacts event subscription for this one repo (`pushed` events), and adds a queue consumer to your Worker. From then on a push **straight to your mirror** runs CI/CD exactly like a GitHub push, and the branch is pushed **back to GitHub** — fast-forward only, never force, never delete — as soon as GitHub is reachable, retrying with backoff meanwhile. Needs one more token permission: **Queues → Edit** (Queues are on the Free plan). The Worker's `GITHUB_TOKEN` must be allowed to push; a protected branch shows up as `rejected`, a divergence as `conflict` (you merge both sides and push to both — nothing is ever forced). `disable` pauses events (the queue stays, free while idle); `--purge` removes queue, subscription, and consumer.
+- `gitflare sync now [--ref <branch>]` — "GitHub is back": compare every mirror branch with GitHub and push the ones that differ right now, instead of waiting for the retry. `gitflare sync status` — per-branch state in both directions (also on the dashboard, with a banner while anything is waiting to reach GitHub).
+- `gitflare remote add` / `remove` — in any checkout, make `git push` fan out to **GitHub and the mirror** (a second `pushurl` on `origin`, GitHub first) with a credential helper that mints 10-minute Artifacts write tokens on the fly — nothing long-lived lands in `.git/config`. When GitHub is down, leg 1 fails and git exits non-zero, but leg 2 lands; with sync enabled the pipeline runs and GitHub catches up when it returns.
+
 ## Contributing
 
 Pre-alpha, built in the open, and there's a lot of obvious next work. Cloudflare Access (M5), the full v0.2 CD feature set, and the v0.3 core CI (M8: sandbox jobs, needs-gated deploys, artifact handover) have landed — see [PLAN.md §12](./PLAN.md#12-milestones-and-development-log) for current status. PRs and issues are welcome — particularly on:
 
 - **Live-validating the remaining CD paths.** The v0.3 CI stack (Containers provisioning, Sandbox exec, the Workers Scripts upload + workers.dev enablement) and the needs-gated deploy job are now validated end-to-end against a real Workers Paid account. Still needing a live run: **Pages Direct Upload**, the **D1 migration** query path, and **Cloudflare Access** (M5) apps/policies.
-- **M9 — GitHub-down mode.** Auto-trigger on pushes to the mirror + fast-forward reverse sync to GitHub; design and PR sequence in [PLAN.md §12 M9](./PLAN.md#12-milestones-and-development-log).
+- **M9 soak.** GitHub-down mode is live-validated (trigger, reverse sync, fan-out, conflict); still unexercised live: the `auth` retry/backoff path, `stalled` after 7 days, and a real multi-day GitHub outage — see [PLAN.md §12 M9](./PLAN.md#12-milestones-and-development-log).
 - **M10 backlog.** R2 build cache keyed on lockfile hash, Browser Run for E2E, the GitHub Actions importer, Pages build-artifact handover, plus the v0.1 items that never shipped (issues/PR read-only mirror, commit log, blame, tags) — see [PLAN.md §12 M10](./PLAN.md#12-milestones-and-development-log).
 - **Private `git clone`.** Access gates the dashboard, but clone still hits Artifacts directly. Closing that needs an Access service token / Mesh path (v0.4+).
 - **Custom domains** in front of the Worker, and **better empty states / error messages** anywhere in the CLI or dashboard.
@@ -133,16 +137,18 @@ Releases are automated with [Release Please](https://github.com/googleapis/relea
 
 If you just want to talk through an idea, open a Discussion or DM [@sinameraji](https://github.com/sinameraji).
 
-## How it works (v0.1)
+## How it works
 
 ```
-git push origin main
-        │
-        ▼
+git push origin main                              git push (mirror leg / GitHub down)
+        │                                                        │
+        ▼                                                        ▼
    github.com ──► webhook ──► your Worker ──────► Artifacts (in your account)
-                                   │                  │
-                                   ▼                  ▼
-                        read-only web UI + API     git clone
+        ▲                          │  ▲                │        │
+        │                          │  └── queue ◄──────┘        ▼
+        │                          ▼      (pushed events)   git clone
+        │               web UI + API · CD · CI
+        └──────── fast-forward push back (sync enable) ◄── RepoDO alarm
 ```
 
 - The dashboard + JSON API live on the Worker, at `https://gitflare-<owner>--<repo>.<you>.workers.dev`.
