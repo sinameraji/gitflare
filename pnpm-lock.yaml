@@ -52,16 +52,11 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)
 
-  packages/shared: {}
-
   packages/worker:
     dependencies:
       '@cloudflare/sandbox':
         specifier: 0.12.3
         version: 0.12.3
-      '@gitflare/shared':
-        specifier: workspace:*
-        version: link:../shared
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
