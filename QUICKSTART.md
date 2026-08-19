@@ -1,6 +1,6 @@
 # GitFlare quickstart (end-to-end)
 
-This walks you through provisioning a GitFlare mirror for one of your GitHub repos onto your own Cloudflare account. The `init` flow below is unchanged since v0.1 and is live-validated through v0.3; the opt-in features that come after it (Access, deploy, CI) are listed at the end.
+This walks you through provisioning a GitFlare mirror for one of your GitHub repos onto your own Cloudflare account. The `init` flow below is unchanged since Stage 1 and is live-validated through Stage 3; the opt-in features that come after it (Access, deploy, CI) are listed at the end.
 
 ## Prereqs
 
@@ -41,7 +41,7 @@ The CLI will then ask for two tokens. Skip ahead to step 3 — section 2 below i
 
 **Cloudflare API token** (https://dash.cloudflare.com/profile/api-tokens):
 
-Click **Create Custom Token** and add these **3 account-level permissions** (this is the minimum for v0.1; later versions will request more as features are added):
+Click **Create Custom Token** and add these **3 account-level permissions** (this is the minimum for Stage 1; later versions will request more as features are added):
 
 | Section | Permission | Access |
 |---|---|---|
@@ -53,7 +53,7 @@ Account Resources: **Include → your account**.
 
 Notes:
 - "Workers Routes" is a *Zone* permission and isn't needed unless you bring your own domain.
-- R2/D1/Workers KV aren't used in v0.1 — they appear in [PLAN.md §11](./PLAN.md#11-auth-and-onboarding) for later versions.
+- R2/D1/Workers KV aren't used in Stage 1 — they appear in [PLAN.md §11](./PLAN.md#11-auth-and-onboarding) for later versions.
 - Artifacts: Edit grants Read implicitly.
 
 ## 3. Walk through `gitflare init`
