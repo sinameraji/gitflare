@@ -1,6 +1,6 @@
 # GitFlare quickstart (end-to-end)
 
-This walks you through provisioning a GitFlare mirror for one of your GitHub repos onto your own Cloudflare account. Tested against v0.1.
+This walks you through provisioning a GitFlare mirror for one of your GitHub repos onto your own Cloudflare account. The `init` flow below is unchanged since v0.1 and is live-validated through v0.3; the opt-in features that come after it (Access, deploy, CI) are listed at the end.
 
 ## Prereqs
 
@@ -65,7 +65,7 @@ When you run `npx gitflare init github.com/<owner>/<repo>`, the CLI will:
 3. Show the **contract** — exactly what's about to be provisioned — and wait for `y`.
 4. Ensure an Artifacts namespace named `gitflare` exists.
 5. Call Artifacts `POST /repos/:name/import` to seed the mirror from GitHub.
-6. Rewrite `packages/worker/wrangler.toml` with your account ID + REPO_MAP.
+6. Generate a `wrangler.toml` for the bundled Worker (account ID, Artifacts + Durable Object bindings, `REPO_MAP`).
 7. Run `wrangler deploy` against your account.
 8. Set `GITHUB_WEBHOOK_SECRET` and `GITHUB_TOKEN` as Worker secrets.
 9. Install a GitHub webhook on the repo pointing at `https://<worker>.workers.dev/webhooks/github`.
@@ -90,7 +90,7 @@ Within a few seconds, refreshing the Worker URL should show:
 
 ## 5. Clone from your mirror
 
-The dashboard shows the Artifacts clone URL. Grab a token from the Cloudflare dashboard (or `gitflare token` once that command lands in M5), then:
+The dashboard shows the Artifacts clone URL and a ready-to-paste "How to clone" snippet. Mint a read token in the Cloudflare dashboard (Artifacts → your namespace → the repo → Tokens), then:
 
 ```bash
 git -c http.extraHeader="Authorization: Bearer $ARTIFACTS_TOKEN" \
@@ -111,3 +111,22 @@ npx gitflare status
 ```
 
 Lists all repos you've provisioned and where their Workers live.
+
+## Next steps (all opt-in, all on your account)
+
+- **Private dashboard:** `gitflare access enable` — Cloudflare Access SSO in front of the UI/API (needs *Access: Apps and Policies → Edit* on your token).
+- **Continuous deploy:** `gitflare deploy enable` + a `.gitflare/deploy.yml` — pushes ship your pre-built Worker/Pages site from your own account.
+- **Generic CI:** `gitflare ci enable` + a `.gitflare/ci.yml` — jobs run in a Cloudflare Sandbox on your account (Workers Paid; needs *Cloudchamber → Edit* and *Containers → Edit*).
+
+Command reference and workflow-file syntax: [README → Other commands](./README.md#other-commands).
+
+## GitHub-down drill
+
+What works today when github.com is unreachable:
+
+1. The dashboard, file browser, and `git clone` from the Artifacts remote keep working (nothing routes through GitHub).
+2. Push your work straight to the Artifacts remote (mint a *write* token; same `-c http.extraHeader=…` trick as the clone above, or `git push https://x:<token>@<remote>`).
+3. Run `gitflare ci run` (or `gitflare deploy run` if you only use CD) — the pipeline runs against the current Artifacts HEAD, on your account.
+4. When GitHub is back, push the same commits to GitHub as usual; the mirror is already up to date, so the resulting webhook sync is a no-op.
+
+Making steps 2–4 automatic — a queue-driven trigger on pushes to the mirror, plus fast-forward reverse sync back to GitHub — is milestone M9 (see [PLAN.md §12](./PLAN.md#12-milestones-and-development-log)). This section will grow into a real drill when it lands.

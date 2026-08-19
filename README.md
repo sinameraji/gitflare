@@ -22,7 +22,7 @@ GitFlare ships in versions. Each one stands alone — if the next one never gets
 |---|---|---|
 | **v0.1** | ✅ **shipping — you are here** | **Read replica.** One command mirrors a GitHub repo into your Cloudflare account: Artifacts for git storage, a Worker that takes GitHub webhooks + serves a dashboard, file browsing with syntax highlighting, README rendering (images proxied through your Worker), sync status. Optional Cloudflare Access gates the dashboard for private repos (implemented, not yet live-validated). If GitHub is down, reads + clones still work. |
 | v0.2 | 🧪 Worker deploys live-validated; Pages + D1 pending | **CD that doesn't depend on GitHub.** Push → your Worker deploys to your own account: Workers + Pages (with preview deploys), bindings (vars/KV/R2/D1/DO/services), opt-in D1 migrations, live deploy logs over WebSocket, plus `deploy run` (the GitHub-down escape hatch), `deploy list`, and `deploy rollback`. Deploys **pre-built** artifacts via `.gitflare/deploy.yml`; arbitrary build steps arrive with v0.3 CI. |
-| v0.3 | 🚧 in progress (core CI live-validated) | **Generic CI.** `.gitflare/ci.yml` with jobs / `needs:` / `run:` steps, executed on Cloudflare Sandboxes (full Linux containers on your account) — validated end-to-end: push → sandbox boots → clones → runs your steps with live logs, and a `needs`-gated deploy job ships **what CI just built** (not the stale committed file) to a reachable Worker. Cancel, run history, GitHub commit statuses. Still to come in v0.3: R2 build cache, Browser Run for E2E, a GitHub Actions importer, Pages build artifacts. |
+| v0.3 | 🚧 in progress (core CI live-validated) | **Generic CI.** `.gitflare/ci.yml` with jobs / `needs:` / `run:` steps, executed on Cloudflare Sandboxes (full Linux containers on your account) — validated end-to-end: push → sandbox boots → clones → runs your steps with live logs, and a `needs`-gated deploy job ships **what CI just built** (not the stale committed file) to a reachable Worker. Cancel, run history, GitHub commit statuses. **Next up (M9): "GitHub-down mode is real"** — pushes to your Artifacts mirror trigger CI/CD automatically (Artifacts events → a Queue on your account), and branch refs sync back to GitHub when it's reachable again, so the mirror-forever loop closes both ways. Still to come after that: R2 build cache, Browser Run for E2E, a GitHub Actions importer, Pages build artifacts. |
 | v0.4 | 📋 planned | **Multi-user teams.** PRs, reviews, comments — native to GitFlare, bidirectionally mirrored to GitHub. Stacked diffs. "Open PR in sandbox" one-click ephemeral env. |
 | v0.5 | 📋 planned | **Cross-tenant collaboration via Cloudflare Mesh.** Alice and Bob on separate Cloudflare accounts; private repos served Mesh-only with per-identity policies instead of SSH keys. |
 | v0.6 | 📋 planned | **Public repos + discovery.** A real code browser for the public web, search, forks across accounts. |
@@ -115,7 +115,8 @@ GitFlare never sees your code, your token, or your traffic. It's an MIT-licensed
 Pre-alpha, built in the open, and there's a lot of obvious next work. Cloudflare Access (M5), the full v0.2 CD feature set, and the v0.3 core CI (M8: sandbox jobs, needs-gated deploys, artifact handover) have landed — see [PLAN.md §12](./PLAN.md#12-milestones-and-development-log) for current status. PRs and issues are welcome — particularly on:
 
 - **Live-validating the remaining CD paths.** The v0.3 CI stack (Containers provisioning, Sandbox exec, the Workers Scripts upload + workers.dev enablement) and the needs-gated deploy job are now validated end-to-end against a real Workers Paid account. Still needing a live run: **Pages Direct Upload**, the **D1 migration** query path, and **Cloudflare Access** (M5) apps/policies.
-- **v0.3 remainder.** R2 build cache keyed on lockfile hash, Browser Run for E2E, the GitHub Actions importer, and Pages build-artifact handover — see [PLAN.md §12 M8 notes](./PLAN.md#12-milestones-and-development-log).
+- **M9 — GitHub-down mode.** Auto-trigger on pushes to the mirror + fast-forward reverse sync to GitHub; design and PR sequence in [PLAN.md §12 M9](./PLAN.md#12-milestones-and-development-log).
+- **M10 backlog.** R2 build cache keyed on lockfile hash, Browser Run for E2E, the GitHub Actions importer, Pages build-artifact handover, plus the v0.1 items that never shipped (issues/PR read-only mirror, commit log, blame, tags) — see [PLAN.md §12 M10](./PLAN.md#12-milestones-and-development-log).
 - **Private `git clone`.** Access gates the dashboard, but clone still hits Artifacts directly. Closing that needs an Access service token / Mesh path (v0.4+).
 - **Custom domains** in front of the Worker, and **better empty states / error messages** anywhere in the CLI or dashboard.
 - **Anything in [PLAN.md §8 Open Questions](./PLAN.md#8-open-questions-to-resolve-before-v01-starts)** you have a strong opinion on.
@@ -161,9 +162,8 @@ gitflare/
 ├── assets/              ← logo, diagrams
 ├── .github/             ← workflows + release automation
 └── packages/
-    ├── cli/             ← the `gitflare` CLI (Node.js, commander + clack)
-    ├── worker/          ← the Cloudflare Worker — sync + deploy + CI pipelines, dashboard
-    └── shared/          ← shared TypeScript types
+    ├── cli/             ← the `gitflare` CLI (Node.js, commander + clack); bundles the worker for npm
+    └── worker/          ← the Cloudflare Worker — sync + deploy + CI pipelines, dashboard
 ```
 
 ## License
