@@ -71,20 +71,24 @@ export async function syncGithubToArtifacts(
     noTags: false,
     onAuth: githubAuth,
   });
-  // The mirror's current tip is `beforeSha` (what GitHub had before this
-  // push). isomorphic-git judges fast-forward-ness from LOCAL history, so if
-  // a single push carries more commits than the shallow window (or the
-  // webhook's `before` is far behind), the base commit sits outside the
-  // window and the push is misreported as not-fast-forward. Deepen until it
-  // is inside. Not reachable at all = a genuine divergence (e.g. a force
-  // push on GitHub) and the push below fails honestly with force:false.
-  if (!isNewBranch) {
+  // isomorphic-git judges fast-forward-ness from LOCAL history: the mirror's
+  // current tip must be inside our shallow window or the push is misreported
+  // as not-fast-forward. That tip is NOT necessarily the webhook's `before` —
+  // once a sync has failed, the mirror lags GitHub by many pushes (seen live
+  // on kimiflare: main stuck at the import sha for months while every push
+  // "failed" the fast-forward check). So anchor on what the mirror actually
+  // has, falling back to `before` if the mirror can't be asked. Not reachable
+  // at any depth = a genuine divergence (e.g. a force push on GitHub) and the
+  // push below fails honestly with force:false.
+  const mirrorTip = await currentMirrorTip(params).catch(() => null);
+  const anchors = mirrorTip ? [mirrorTip] : isNewBranch ? [] : [params.beforeSha];
+  if (anchors.length > 0) {
     await deepenUntilReachable({
       fs,
       dir,
       url: githubUrl,
       ref: branchName,
-      anchors: [params.beforeSha],
+      anchors,
       onAuth: githubAuth,
     });
   }
@@ -124,4 +128,22 @@ export async function syncGithubToArtifacts(
     pushedSha: params.afterSha,
     durationMs: Date.now() - start,
   };
+}
+
+/** The mirror's tip for `params.ref`, or null if the ref doesn't exist there yet. */
+async function currentMirrorTip(params: SyncParams): Promise<string | null> {
+  const tokenResult = (await params.artifactsRepo.createToken("read", 120)) as {
+    plaintext?: string;
+    token?: string;
+  };
+  const rawToken = tokenResult.plaintext ?? tokenResult.token;
+  if (!rawToken) return null;
+  const password = tokenSecret(rawToken);
+  const refs = await git.listServerRefs({
+    http,
+    url: params.remote,
+    prefix: params.ref,
+    onAuth: () => ({ username: "x", password }),
+  });
+  return refs.find((r) => r.ref === params.ref)?.oid ?? null;
 }
