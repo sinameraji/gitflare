@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.4.0...gitflare-v0.5.0) (2026-08-19)
+
+
+### Features
+
+* **cli:** gitflare remote add|remove + credential helper (M9 PR3) ([f1b640e](https://github.com/sinameraji/gitflare/commit/f1b640e259ae5cc936cdbc9b3c30c4aea3c1ffe1))
+* **cli:** gitflare remote add|remove + git credential helper for mirror push fan-out (M9 PR3) ([8455365](https://github.com/sinameraji/gitflare/commit/8455365fab1d10ced580cba065962c0df83cbfcc))
+* **sync:** queue consumer + gitflare sync enable|disable|now|status (M9 PR2) ([0b9034f](https://github.com/sinameraji/gitflare/commit/0b9034f97465fe9f85fdb258edbc932023fb3575))
+
+
+### Bug Fixes
+
+* **cli:** parse GitHub origin URLs that embed userinfo ([f12de47](https://github.com/sinameraji/gitflare/commit/f12de475bd85f25ed7c1afa2d0c762b9f0f0b56a))
+* **sync:** anchor the forward sync's shallow window on the mirror's actual tip ([3febca1](https://github.com/sinameraji/gitflare/commit/3febca191f65750aef5a2bdb17f11f710ccb77f6))
+* **sync:** anchor the forward sync's shallow window on the mirror's actual tip ([bafa285](https://github.com/sinameraji/gitflare/commit/bafa285d006edcd1c84a8364714474deef763b72))
+* **sync:** keep a standing forward-sync error when recording a mirror push ([99de4c1](https://github.com/sinameraji/gitflare/commit/99de4c103fc1fb3be84cb7013bff8001955975c6))
+
 ## [0.4.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.3.2...gitflare-v0.4.0) (2026-08-19)
 
 
