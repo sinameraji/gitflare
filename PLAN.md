@@ -347,7 +347,7 @@ From the Cloudflare docs and the launch blog:
 
 ## 8. Open questions to resolve before v0.1 starts
 
-1. **Domain.** Working assumption: `gitflare.dev` for the marketing + onboarding surface. Per-user instances live at `<repo>.<account>.gitflare.dev` (or a custom domain the user brings). Confirm availability and budget.
+1. **Domain.** Working assumption: `gitflare.dev` for the marketing + onboarding surface. Per-user instances live at `<repo>.<account>.gitflare.dev` (or a custom domain the user brings). Confirm availability and budget. *(2026-08-19: still no domain, and no plan to get one for now — the CLI is the only surface; see §11 (b).)*
 2. ~~**Pricing model.**~~ Resolved: **there isn't one.** GitFlare is not being monetized — no hosted tier, no per-seat, no paid coordinator. Every user runs it on their own Cloudflare account and pays Cloudflare directly for what they use. This is a standing constraint on the design, not a placeholder: anything that only works if there's a company collecting revenue behind it doesn't belong in the plan.
 3. ~~**License.**~~ Resolved: **MIT**. GitFlare is and stays fully open source — no plans for a hosted commercial offering or relicensing. Everyone runs it on their own Cloudflare account, on the same terms.
 4. **What "issues mirror" actually shows in v0.1.** Re-render from D1 (highest fidelity, most work), embed GitHub's UI in an iframe (lowest fidelity, fastest), or re-render read-only with link-out for actions (the middle path, currently leaning here).
@@ -489,7 +489,7 @@ That's it for v0.1 — three permissions. *Workers Routes* is a Zone-level permi
 
 When the user upgrades versions, we show a diff of the new scopes vs. the existing token and walk them through re-issuing.
 
-**(b) Cloudflare OAuth ("Authorize app").** One-click flow if Cloudflare supports it for our app at the required scopes. Less transparent than path (a) — we offer it for the lazy path but recommend (a). Power users will pick (a); we don't fight that.
+**(b) Cloudflare OAuth ("Authorize app").** ~~One-click flow if Cloudflare supports it for our app at the required scopes.~~ **Not planned (decided 2026-08-19).** Cloudflare does support it now — self-managed OAuth clients (GA 2026-06) with a PKCE flow for CLIs, scopes that map 1:1 to the permissions above, and a consent screen that returns the chosen account — but a *public* client (one any Cloudflare user can authorize) requires a registered OAuth client, a logo, a client URL on a domain we control with DNS-TXT verification, and public visibility is permanent. GitFlare has no domain and doesn't want to own an OAuth client registration, so path (a) — a scoped API token the user creates and pastes — stays the only path. Nothing rules OAuth out later; it's just not on the roadmap and nothing should depend on it. (Cheap improvement available any time without OAuth: link to the token page with the permissions pre-filled via `permissionGroupKeys=`.)
 
 ### Step 4 — Deploy from the user's machine
 
