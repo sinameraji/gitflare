@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.3.2...gitflare-v0.4.0) (2026-08-19)
+
+
+### Features
+
+* **sync:** reverse-sync engine + RepoDO state machine + push dedupe (M9 PR1) ([d444dd7](https://github.com/sinameraji/gitflare/commit/d444dd772b357900a2f1665d780f902935067197))
+* **sync:** reverse-sync engine + RepoDO state machine + push dedupe (M9 PR1) ([0f64b6a](https://github.com/sinameraji/gitflare/commit/0f64b6a54c1544f5965104bdf3b07e3ddcf4e49f))
+
 ## [0.3.2](https://github.com/sinameraji/gitflare/compare/gitflare-v0.3.1...gitflare-v0.3.2) (2026-08-19)
 
 
