@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { parseGithubUrl, artifactsRepoNameFor, randomHex } from "../src/util";
 
 describe("parseGithubUrl", () => {
+  it("drops userinfo from https URLs (a checkout whose origin embeds a token)", () => {
+    expect(parseGithubUrl("https://x-access-token:ghp_abc@github.com/o/r.git")).toEqual({ owner: "o", repo: "r" });
+  });
   it("handles plain owner/repo", () => {
     expect(parseGithubUrl("sina/kimiflare")).toEqual({ owner: "sina", repo: "kimiflare" });
   });

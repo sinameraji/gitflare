@@ -28,6 +28,7 @@ export function parseGithubUrl(input: string): { owner: string; repo: string } {
   // Accepts: github.com/owner/repo, https://github.com/owner/repo, owner/repo, git@github.com:owner/repo.git
   const cleaned = input
     .replace(/^https?:\/\//, "")
+    .replace(/^[^/@]+@github\.com\//, "github.com/") // https://user:token@github.com/o/r — drop userinfo
     .replace(/^git@github\.com:/, "github.com/")
     .replace(/\.git$/, "")
     .replace(/^github\.com\//, "");
