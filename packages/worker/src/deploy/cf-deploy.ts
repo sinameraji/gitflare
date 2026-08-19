@@ -143,7 +143,13 @@ export async function hashPagesFiles(
   const manifest: Record<string, string> = {};
   const byHash = new Map<string, PagesFile>();
   for (const f of files) {
-    const digest = await sha256Hex(f.bytes);
+    // Pages asset keys are 32 hex chars. wrangler uses blake3(base64 + ext)
+    // truncated to 32; the server treats the key as an opaque id (verified
+    // live 2026-08-19: 64-char sha256 keys were accepted at upload but every
+    // request 500'd at serve time). blake3 isn't in WebCrypto, so hash the
+    // same input shape with SHA-256 and truncate the same way.
+    const ext = f.path.includes(".") ? f.path.slice(f.path.lastIndexOf(".") + 1) : "";
+    const digest = (await sha256Hex(new TextEncoder().encode(base64(f.bytes) + ext))).slice(0, 32);
     manifest["/" + f.path.replace(/^\/+/, "")] = digest;
     byHash.set(digest, f);
   }
