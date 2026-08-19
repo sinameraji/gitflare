@@ -321,6 +321,33 @@ export async function runSyncTags(repoArg: string | undefined): Promise<void> {
   p.outro(`Progress: the Tags section on ${kleur.cyan(entry.workerUrl)}, or ${kleur.cyan("gitflare sync status")}. New tags pushed to GitHub sync automatically from now on.`);
 }
 
+export async function runSyncIssues(repoArg: string | undefined): Promise<void> {
+  p.intro(kleur.bold(orange("GitFlare sync issues")));
+  const cfg = await loadConfig();
+  const entry = await pickRepo(cfg, repoArg);
+  if (!entry) return;
+  const secret = controlSecretFor(entry);
+  if (!secret) return;
+  const sp = p.spinner();
+  sp.start("Asking the Worker to (re)import issues, pull requests, comments, and releases from GitHub");
+  try {
+    const res = await controlFetch(entry, secret, "/control/meta/backfill", { method: "POST", body: { repo: entry.artifactsRepoName, force: true } });
+    const j = (await res.json().catch(() => ({}))) as { accepted?: boolean; reason?: string };
+    if (res.status === 202 && j.accepted) sp.stop("Import started on the Worker (a few hundred items take under a minute)");
+    else if (j.reason) sp.stop(`Not started: ${j.reason}`);
+    else {
+      sp.stop("Request failed");
+      p.log.error(`${res.status}: ${JSON.stringify(j)}`);
+      return;
+    }
+  } catch (e) {
+    sp.stop("Request failed");
+    p.log.error((e as Error).message);
+    return;
+  }
+  p.outro(`Browse at ${kleur.cyan(`${entry.workerUrl}/r/${entry.artifactsRepoName}/issues`)} — read-only; new activity arrives via the webhook.`);
+}
+
 interface SyncStateResponse {
   refs: Array<{ ref: string; sha: string; syncedAt: number; source?: string; forwardError?: string }>;
   reverse: Array<{

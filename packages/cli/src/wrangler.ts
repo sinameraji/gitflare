@@ -164,7 +164,7 @@ max_retries = 5
 
 `
     : "";
-  // v3/v4 are unconditional ON PURPOSE: migrations are free-plan-safe, and
+  // v3/v4/v5 are unconditional ON PURPOSE: migrations are free-plan-safe, and
   // gating them on local config would hard-fail redeploys from a second
   // machine once they've been applied remotely.
   return `name = "${p.workerName}"
@@ -189,6 +189,10 @@ class_name = "DeployDO"
 name = "CI"
 class_name = "CiDO"
 
+[[durable_objects.bindings]]
+name = "META"
+class_name = "MetaDO"
+
 ${sandbox}${consumer}[[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RepoDO"]
@@ -204,6 +208,10 @@ new_sqlite_classes = ["CiDO"]
 [[migrations]]
 tag = "v4"
 new_sqlite_classes = ["Sandbox"]
+
+[[migrations]]
+tag = "v5"
+new_sqlite_classes = ["MetaDO"]
 
 ${varsBlock(p, version)}`;
 }

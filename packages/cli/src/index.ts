@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { runInit } from "./commands/init.js";
 import { runStatus } from "./commands/status.js";
 import { runAccessEnable, runAccessDisable } from "./commands/access.js";
-import { runSyncEnable, runSyncDisable, runSyncNow, runSyncStatus, runSyncTags } from "./commands/sync.js";
+import { runSyncEnable, runSyncDisable, runSyncNow, runSyncStatus, runSyncTags, runSyncIssues } from "./commands/sync.js";
 import { runRemoteAdd, runRemoteRemove, runCredentialHelper } from "./commands/remote.js";
 import {
   runDeployEnable,
@@ -133,6 +133,10 @@ sync.command("tags")
   .description("Mirror every existing GitHub tag into Artifacts once (new tags sync automatically on push)")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
   .action(runSyncTags);
+sync.command("issues")
+  .description("(Re)import issues, pull requests, comments, and releases from GitHub into the read-only mirror")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runSyncIssues);
 sync.command("status")
   .description("Show per-branch sync state in both directions")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")

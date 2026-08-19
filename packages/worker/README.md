@@ -46,6 +46,7 @@ GitHub ── push webhook (HMAC) ──► POST /webhooks/github ── 202 imm
 | `RepoDO` | `REPO` | `POST /sync`, `POST /artifacts-push`, `POST /reverse/now`, `GET /state`, `alarm()` | `ref:<ref>` → `{ref, sha, syncedAt, source, forwardError?}`; `outbound:<ref>` (forward push in flight); `reverse:<ref>` → `{status: pending\|synced\|conflict\|rejected\|auth\|error\|stalled, attempts, nextAttemptAt, lastError, githubSha}` |
 | `DeployDO` | `DEPLOY` | `POST /deploy`, `POST /rollback`, `GET /state`, `/stream` (WS) | `deploy:<id>` records (mode push/manual/rollback/ci, steps, 500-line log ring), `migrations:<db>` applied set |
 | `CiDO` | `CI` | `POST /run` (202, detached), `POST /cancel`, `GET /state`, `/stream` (WS) | `run:<id>` records (jobs, per-step outcomes, log ring, deadline); alarm watchdog fails over-budget/orphaned runs and destroys sandboxes |
+| `MetaDO` | `META` | `POST /event`, `POST /backfill`, `GET /meta`, `GET /counts`, `GET /issues[/:n]`, `GET /pulls[/:n]`, `GET /releases`, `alarm()` (runs the import) | `issue:<n>`, `pull:<n>`, `comment:<n>:<ts>:<id>`, `release:<ts>:<id>`, `meta` (import status) — read-only mirror of GitHub metadata |
 | `Sandbox` (from `@cloudflare/sandbox`) | `SANDBOX` (only after `gitflare ci enable`) | — | the CI container |
 
 ## HTTP routes
@@ -57,13 +58,15 @@ GitHub ── push webhook (HMAC) ──► POST /webhooks/github ── 202 imm
 | `GET /r/:name/tree/*`, `GET /r/:name/blob/*` | Access* | file browser (default branch HEAD; blobs highlighted, binaries detected) |
 | `GET /r/:name/raw/*` | Access* | raw bytes from the mirror (README image proxy) |
 | `GET /api/refs` | Access* | JSON: RepoDO state for every repo |
+| `GET /r/:name/commits[?ref=]` | Access* | commit log (Artifacts binding `log()`) |
+| `GET /r/:name/issues[?state=]`, `/issues/:n`, `/pulls[?state=]`, `/pulls/:n`, `/releases` | Access* | read-only metadata mirror (first visit triggers the import) |
 | `GET /r/:name/deployments`, `GET /r/:name/deployments/stream` | Access* | deploy history + live-log WebSocket |
 | `GET /r/:name/ci`, `GET /r/:name/ci/stream`, `POST /r/:name/ci/cancel` | Access* (cancel refuses unless Access is on) | CI runs + live logs + cancel |
 | `POST /control/deploy/run`, `POST /control/deploy/rollback`, `GET /control/deployments` | `CONTROL_SECRET` bearer | CLI: `deploy run/rollback/list` |
 | `POST /control/ci/run`, `POST /control/ci/cancel`, `GET /control/ci/runs` | `CONTROL_SECRET` bearer | CLI: `ci run/cancel/list` |
-| `POST /control/sync/reverse`, `GET /control/sync/state` | `CONTROL_SECRET` bearer | CLI: `sync now` (re-queue / reconcile), `sync status` |
+| `POST /control/sync/reverse`, `GET /control/sync/state`, `POST /control/sync/tags`, `POST /control/meta/backfill` | `CONTROL_SECRET` bearer | CLI: `sync now` (re-queue / reconcile), `sync status`, `sync tags`, `sync issues` |
 | *queue consumer* (`export default { fetch, queue }`) | queue binding | Artifacts `cf.artifacts.repo.pushed` → RepoDO `/artifacts-push` → dispatch as mode `artifacts-push` |
-| `POST /webhooks/github` | HMAC (`GITHUB_WEBHOOK_SECRET`) | `ping`, `push` (branches only — tags/deletes are acked and skipped); every other event is acked and ignored |
+| `POST /webhooks/github` | HMAC (`GITHUB_WEBHOOK_SECRET`) | `ping`; `push` (branches → sync + CI/CD, tags → mirrored, deletes skipped); `issues` / `pull_request` / `issue_comment` / `pull_request_review` / `release` → MetaDO; anything else acked and ignored |
 
 \* Access enforcement only when `ACCESS_AUD` + `ACCESS_TEAM_DOMAIN` are set (`gitflare access enable`); otherwise the mirror is public-readable.
 
@@ -72,7 +75,7 @@ GitHub ── push webhook (HMAC) ──► POST /webhooks/github ── 202 imm
 | Name | Kind | Set by | What |
 |---|---|---|---|
 | `ARTIFACTS` | Artifacts namespace binding | `init` | git storage; used to mint short-lived read/write tokens |
-| `REPO`, `DEPLOY`, `CI` | Durable Object bindings | `init` | see table above (migrations v1–v4 always emitted) |
+| `REPO`, `DEPLOY`, `CI`, `META` | Durable Object bindings | `init` | see table above (migrations v1–v5 always emitted) |
 | `SANDBOX` + `[[containers]]` | DO binding + container app | `ci enable` | `docker.io/cloudflare/sandbox:<pinned>`, `instance_type`, `max_instances = 5` |
 | `GITFLARE_VERSION` | var | every deploy | CLI version, shown in the UI + `/health` |
 | `ACCOUNT_ID` | var | every deploy | for the Workers Scripts / Pages / D1 REST calls |
@@ -94,7 +97,8 @@ GitHub ── push webhook (HMAC) ──► POST /webhooks/github ── 202 imm
 src/
 ├── index.tsx            routes, webhook handler, DO exports
 ├── env.ts               Env + REPO_MAP helpers        types.ts   Artifacts binding types
-├── durable-objects/     repo.ts · deploy.ts · ci.ts
+├── durable-objects/     repo.ts · deploy.ts · ci.ts · meta.ts (issues/PRs/releases mirror)
+├── meta/map.ts          GitHub payload → trimmed records; #N linkifier
 ├── sync/                git-sync.ts (GitHub→Artifacts) · reverse-sync.ts (Artifacts→GitHub) · memfs.ts
 ├── events/              artifacts.ts (event parsing, own-push classification) · consumer.ts (queue handler)
 ├── pipeline/dispatch.ts the single CI-vs-Deploy decision (webhook + consumer)

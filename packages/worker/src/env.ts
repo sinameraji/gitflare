@@ -54,6 +54,8 @@ export interface Env {
   REPO: DurableObjectNamespace;
   DEPLOY: DurableObjectNamespace;
   CI: DurableObjectNamespace;
+  // Read-only issues/PRs/releases mirror (Stage 1). Migration v5.
+  META: DurableObjectNamespace;
   // The Cloudflare Sandbox container namespace — present only after
   // `gitflare ci enable` adds the [[containers]] block to the Worker config.
   SANDBOX?: DurableObjectNamespace;
