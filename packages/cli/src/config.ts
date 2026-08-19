@@ -36,6 +36,17 @@ export interface LocalConfig {
       // Cloudflare Containers instance type for the CI sandbox.
       instanceType: string;
     };
+    // Set by `gitflare sync enable` (M9). `enabled: false` after `sync disable`
+    // — the queue + consumer stay provisioned; `--purge` removes the entry.
+    sync?: {
+      enabledAt: string;
+      enabled: boolean;
+      // Bearer secret for /control/* — shared with deploy/ci (one Worker secret).
+      controlSecret: string;
+      queueName: string;
+      queueId: string;
+      subscriptionId: string;
+    };
   }>;
   // Tokens — kept local, never sent to gitflare servers.
   github?: { token: string };

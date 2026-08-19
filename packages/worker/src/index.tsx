@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { verifyGithubSignature } from "./github/webhook";
 import { lookupArtifactsRepoEntry, lookupByArtifactsName, parseRepoMap, type Env } from "./env";
 import { dispatchPush } from "./pipeline/dispatch";
+import { handleQueue } from "./events/consumer";
 import { repoStubFor } from "./durable-objects/repo";
 import { listArtifactsRefs } from "./artifacts/refs";
 import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt } from "./artifacts/content";
@@ -563,4 +564,9 @@ app.post("/webhooks/github", async (c) => {
   return c.json({ accepted: true, skipped: event }, 202);
 });
 
-export default app;
+// The Worker is both an HTTP app and (once `gitflare sync enable` binds a
+// queue consumer) a consumer of Artifacts `pushed` events.
+export default {
+  fetch: app.fetch,
+  queue: handleQueue,
+};

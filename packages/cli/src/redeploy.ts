@@ -29,5 +29,9 @@ export async function redeployWorker(
     ...(entry.ci
       ? { ci: { provisioned: true, enabled: entry.ci.enabled, instanceType: entry.ci.instanceType } }
       : {}),
+    ...(entry.sync
+      ? { sync: { provisioned: true, enabled: entry.sync.enabled, queueName: entry.sync.queueName } }
+      : {}),
+    ...(entry.workerUrl ? { workerUrl: entry.workerUrl } : {}),
   });
 }

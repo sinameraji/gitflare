@@ -32,6 +32,21 @@ export interface DeployParams {
   // CI on Cloudflare Sandboxes (set by `gitflare ci enable`). `provisioned`
   // emits the SANDBOX binding + containers block; `enabled` emits CI_ENABLED.
   ci?: { provisioned: boolean; enabled: boolean; instanceType: string };
+  // Mirror-push sync (set by `gitflare sync enable`, M9). `provisioned` emits
+  // the [[queues.consumers]] block for the Artifacts-events queue; `enabled`
+  // emits SYNC_ENABLED (reverse pushes + event-driven dispatch).
+  sync?: { provisioned: boolean; enabled: boolean; queueName: string };
+  // The Worker's own public URL, once known (every redeploy). The queue
+  // consumer has no request to derive it from and needs it for status links.
+  workerUrl?: string;
+}
+
+/**
+ * The queue that receives this Worker's Artifacts `pushed` events. Queue names
+ * accept `--` (verified live), so the worker name is used as-is.
+ */
+export function queueNameFor(workerName: string): string {
+  return `${workerName}-events`;
 }
 
 export interface DeployResult {
@@ -101,10 +116,18 @@ ACCESS_TEAM_DOMAIN = ${JSON.stringify(p.accessTeamDomain)}
     out += `CI_ENABLED = "1"
 `;
   }
+  if (p.sync?.enabled) {
+    out += `SYNC_ENABLED = "1"
+`;
+  }
+  if (p.workerUrl) {
+    out += `WORKER_URL = ${JSON.stringify(p.workerUrl)}
+`;
+  }
   return out;
 }
 
-function tomlFor(main: string, p: DeployParams, version: string): string {
+export function tomlFor(main: string, p: DeployParams, version: string): string {
   // The SANDBOX binding + containers block are only emitted once CI has been
   // provisioned (paid-plan Containers). The v3/v4 migrations below are always
   // emitted regardless.
@@ -125,6 +148,19 @@ class_name = "Sandbox"
 image = "${SANDBOX_IMAGE}"
 instance_type = "${p.ci.instanceType}"
 max_instances = 5
+
+`
+    : "";
+  // The Artifacts-events queue consumer (M9). Only once `sync enable` has
+  // created the queue — wrangler refuses to bind a consumer to a queue that
+  // doesn't exist. Stays after `sync disable` (SYNC_ENABLED is what gates
+  // behaviour); `sync disable --purge` drops it.
+  const consumer = p.sync?.provisioned
+    ? `[[queues.consumers]]
+queue = "${p.sync.queueName}"
+max_batch_size = 10
+max_batch_timeout = 2
+max_retries = 5
 
 `
     : "";
@@ -153,7 +189,7 @@ class_name = "DeployDO"
 name = "CI"
 class_name = "CiDO"
 
-${sandbox}[[migrations]]
+${sandbox}${consumer}[[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RepoDO"]
 

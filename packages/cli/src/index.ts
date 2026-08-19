@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { runInit } from "./commands/init.js";
 import { runStatus } from "./commands/status.js";
 import { runAccessEnable, runAccessDisable } from "./commands/access.js";
+import { runSyncEnable, runSyncDisable, runSyncNow, runSyncStatus } from "./commands/sync.js";
 import {
   runDeployEnable,
   runDeployDisable,
@@ -109,5 +110,27 @@ ci.command("cancel")
   .description("Cancel the in-flight CI run for a repo")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
   .action(runCiCancel);
+
+const sync = program
+  .command("sync")
+  .description("GitHub-down mode: run CI/CD from pushes to the mirror and push them back to GitHub");
+sync.command("enable")
+  .description("Provision a Queue + Artifacts push subscription and enable reverse sync (mirror → GitHub)")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runSyncEnable);
+sync.command("disable")
+  .description("Pause events + reverse sync (queue stays); --purge removes the queue + subscription")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .option("--purge", "delete the queue, subscription, and consumer binding")
+  .action(runSyncDisable);
+sync.command("now")
+  .description("Push the mirror's branches to GitHub now (fast-forward only) — e.g. right after GitHub comes back")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .option("--ref <ref>", "only this branch (name or refs/heads/…)")
+  .action(runSyncNow);
+sync.command("status")
+  .description("Show per-branch sync state in both directions")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runSyncStatus);
 
 program.parseAsync(process.argv);
