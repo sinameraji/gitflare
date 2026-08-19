@@ -226,11 +226,15 @@ export class RepoDO {
     }
 
     // External push to the mirror: record it, queue the reverse sync, dispatch.
+    // Keep any standing forward-sync error — it describes GitHub→mirror, which
+    // this event says nothing about (seen live: a divergence's forward error
+    // was wiped by the very mirror push that caused it).
     await this.state.storage.put<RefState>(`ref:${req.ref}`, {
       ref: req.ref,
       sha: req.after,
       syncedAt: now,
       source: "artifacts",
+      ...(refState?.forwardError ? { forwardError: refState.forwardError } : {}),
     });
     await this.state.storage.put<ReverseState>(`reverse:${req.ref}`, {
       ref: req.ref,
