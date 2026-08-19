@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/sinameraji/gitflare/compare/gitflare-v0.3.1...gitflare-v0.3.2) (2026-08-19)
+
+
+### Bug Fixes
+
+* **cli:** bring the npm README in line with v0.3 (deploy/ci/access commands, real URL shape) ([4ff0782](https://github.com/sinameraji/gitflare/commit/4ff0782d3ced27a45f691c9de32e0812caa61d6a))
+
 ## [0.3.1](https://github.com/sinameraji/gitflare/compare/gitflare-v0.3.0...gitflare-v0.3.1) (2026-07-17)
 
 
