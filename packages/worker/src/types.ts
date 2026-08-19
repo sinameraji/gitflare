@@ -50,6 +50,22 @@ export interface ArtifactsRepo {
   listTokens(): Promise<TokenSummary[]>;
   revokeToken(tokenOrId: string): Promise<void>;
   fork(name: string, opts?: { branch?: string }): Promise<CreatedRepo>;
+  /** Server-side commit history (no clone). Shape mirrors the REST /log route. */
+  log?(opts?: { ref?: string; limit?: number; offset?: number }): Promise<unknown>;
+  readCommit?(hash: string): Promise<unknown>;
+  readTree?(hash: string): Promise<unknown>;
+}
+
+/** One entry of the Artifacts /log route (REST and binding). */
+export interface ArtifactsLogEntry {
+  hash: string;
+  treeHash?: string;
+  message: string;
+  author: { name: string; email: string };
+  committer?: { name: string; email: string };
+  parents: string[];
+  authoredAt: number; // unix seconds
+  committedAt?: number;
 }
 
 export interface TokenResult {

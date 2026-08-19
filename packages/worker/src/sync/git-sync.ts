@@ -147,3 +147,168 @@ async function currentMirrorTip(params: SyncParams): Promise<string | null> {
   });
   return refs.find((r) => r.ref === params.ref)?.oid ?? null;
 }
+
+// ---- tags (forward: GitHub → Artifacts) ------------------------------------
+//
+// Why the local store is cloned from the MIRROR first: isomorphic-git's push
+// only omits objects it can prove the remote has — everything reachable from
+// `refs/remotes/origin/HEAD` in the local store (thin pack). With the mirror as
+// origin (depth-1 clone of its default branch), a tag push carries just the tag
+// commit plus the blobs that differ from the mirror's tip — instead of a full
+// snapshot per tag, which is what a GitHub-cloned store produced (~35 s/tag
+// live). Tag objects themselves come from GitHub into the same store.
+
+export interface TagSyncParams {
+  githubFullName: string;
+  githubToken: string;
+  artifactsRepo: ArtifactsRepo;
+  remote: string;
+}
+
+async function openTagWorkspace(params: TagSyncParams): Promise<{
+  fs: MemFs;
+  dir: string;
+  githubUrl: string;
+  githubAuth: () => { username: string; password: string };
+  mirrorTags: Map<string, string>;
+}> {
+  const fs = new MemFs();
+  const dir = "/repo";
+  const githubUrl = `https://github.com/${params.githubFullName}.git`;
+  const githubAuth = (): { username: string; password: string } => ({
+    username: "x-access-token",
+    password: params.githubToken,
+  });
+  const readPassword = await mintPassword(params.artifactsRepo, "read", 300);
+  const mirrorAuth = (): { username: string; password: string } => ({ username: "x", password: readPassword });
+  const refs = await git.listServerRefs({ http, url: params.remote, prefix: "refs/tags/", onAuth: mirrorAuth });
+  const mirrorTags = new Map(refs.filter((r) => !r.ref.endsWith("^{}")).map((r) => [r.ref, r.oid]));
+  // origin = the mirror. noTags: its tags come back on the listing above; we
+  // don't need their objects.
+  await git.clone({ fs, http, dir, url: params.remote, singleBranch: true, depth: 1, noCheckout: true, noTags: true, onAuth: mirrorAuth });
+  // A second remote for GitHub so fetch() has a refspec to work with; tag
+  // objects land in the same object store as the mirror's.
+  await git.addRemote({ fs, dir, remote: "github", url: githubUrl, force: true });
+  return { fs, dir, githubUrl, githubAuth, mirrorTags };
+}
+
+async function pushTag(
+  ws: { fs: MemFs; dir: string },
+  remote: string,
+  writePassword: string,
+  fullRef: string,
+): Promise<void> {
+  await git.push({
+    fs: ws.fs,
+    http,
+    dir: ws.dir,
+    url: remote,
+    remote: "origin",
+    ref: fullRef,
+    remoteRef: fullRef,
+    force: false,
+    onAuth: () => ({ username: "x", password: writePassword }),
+  });
+}
+
+/**
+ * Mirror ONE tag from GitHub into the Artifacts repo (webhook path). Tags are
+ * immutable: an identical tag on the mirror is a no-op; a different sha for
+ * the same name is left alone (never force).
+ */
+export async function syncTagGithubToArtifacts(
+  params: TagSyncParams & { tag: string },
+): Promise<{ ok: boolean; sha?: string | undefined; skipped?: string | undefined; durationMs: number }> {
+  const start = Date.now();
+  const fullRef = `refs/tags/${params.tag}`;
+  const ws = await openTagWorkspace(params);
+  const existing = ws.mirrorTags.get(fullRef);
+  const fetched = await git.fetch({
+    fs: ws.fs,
+    http,
+    dir: ws.dir,
+    url: ws.githubUrl,
+    remote: "github",
+    ref: fullRef,
+    singleBranch: true,
+    depth: 1,
+    tags: false,
+    onAuth: ws.githubAuth,
+  });
+  const sha = fetched.fetchHead ?? undefined;
+  if (!sha) return { ok: false, skipped: "tag not found on GitHub", durationMs: Date.now() - start };
+  if (existing === sha) return { ok: true, sha, skipped: "already on mirror", durationMs: Date.now() - start };
+  if (existing && existing !== sha) {
+    return { ok: false, sha, skipped: `mirror has ${existing.slice(0, 8)} for this tag; not overwriting`, durationMs: Date.now() - start };
+  }
+  await git.writeRef({ fs: ws.fs, dir: ws.dir, ref: fullRef, value: sha, force: true });
+  const writePassword = await mintPassword(params.artifactsRepo, "write", 600);
+  await pushTag(ws, params.remote, writePassword, fullRef);
+  return { ok: true, sha, durationMs: Date.now() - start };
+}
+
+/**
+ * Backfill: mirror every GitHub tag the Artifacts repo doesn't have yet.
+ * One bulk shallow fetch of all tags from GitHub (`tags: true` needs
+ * `singleBranch: false` to actually bring the objects — verified), then one
+ * thin-pack push per missing tag. Per-tag failures are recorded, not fatal.
+ */
+export async function syncAllTagsGithubToArtifacts(
+  params: TagSyncParams & { limit?: number | undefined },
+): Promise<{
+  pushed: Array<{ ref: string; oid: string }>;
+  alreadyPresent: number;
+  conflicts: string[];
+  failed: Array<{ ref: string; error: string }>;
+  durationMs: number;
+}> {
+  const start = Date.now();
+  const ws = await openTagWorkspace(params);
+  const githubRefs = await git.listServerRefs({ http, url: ws.githubUrl, prefix: "refs/tags/", onAuth: ws.githubAuth });
+  const wanted: Array<{ ref: string; oid: string }> = [];
+  const conflicts: string[] = [];
+  let alreadyPresent = 0;
+  for (const r of githubRefs) {
+    if (r.ref.endsWith("^{}")) continue; // peeled entries
+    const have = ws.mirrorTags.get(r.ref);
+    if (have === r.oid) alreadyPresent++;
+    else if (have) conflicts.push(r.ref);
+    else wanted.push({ ref: r.ref, oid: r.oid });
+  }
+  const todo = params.limit ? wanted.slice(0, params.limit) : wanted;
+  if (todo.length === 0) return { pushed: [], alreadyPresent, conflicts, failed: [], durationMs: Date.now() - start };
+
+  await git.fetch({
+    fs: ws.fs,
+    http,
+    dir: ws.dir,
+    url: ws.githubUrl,
+    remote: "github",
+    depth: 1,
+    tags: true,
+    singleBranch: false,
+    onAuth: ws.githubAuth,
+  });
+
+  const writePassword = await mintPassword(params.artifactsRepo, "write", 1800);
+  const pushed: Array<{ ref: string; oid: string }> = [];
+  const failed: Array<{ ref: string; error: string }> = [];
+  for (const t of todo) {
+    try {
+      const local = await git.resolveRef({ fs: ws.fs, dir: ws.dir, ref: t.ref }).catch(() => null);
+      if (!local) await git.writeRef({ fs: ws.fs, dir: ws.dir, ref: t.ref, value: t.oid, force: true });
+      await pushTag(ws, params.remote, writePassword, t.ref);
+      pushed.push({ ref: t.ref, oid: local ?? t.oid });
+    } catch (err) {
+      failed.push({ ref: t.ref, error: (err as Error).message.slice(0, 200) });
+    }
+  }
+  return { pushed, alreadyPresent, conflicts, failed, durationMs: Date.now() - start };
+}
+
+async function mintPassword(repo: ArtifactsRepo, scope: "read" | "write", ttl: number): Promise<string> {
+  const tokenResult = (await repo.createToken(scope, ttl)) as { plaintext?: string; token?: string };
+  const rawToken = tokenResult.plaintext ?? tokenResult.token;
+  if (!rawToken) throw new Error(`createToken (${scope}) returned no token`);
+  return tokenSecret(rawToken);
+}

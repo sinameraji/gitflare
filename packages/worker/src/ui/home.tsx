@@ -3,6 +3,7 @@ import { marked } from "marked";
 import { Layout } from "./layout";
 import { LOGO_PNG_DATA_URL } from "./logo-data";
 import type { TreeEntry } from "../artifacts/content";
+import type { GithubHealth } from "../github/health";
 
 export interface HomeRepo {
   githubFullName: string;
@@ -31,6 +32,16 @@ export interface HomeRepo {
   }>;
   /** `gitflare sync enable` is active on this Worker. */
   syncEnabled?: boolean | undefined;
+  /** Last `gitflare sync tags` backfill, if any. */
+  tagBackfill?: {
+    status: "running" | "done" | "failed";
+    startedAt: number;
+    finishedAt?: number | undefined;
+    pushed?: number | undefined;
+    alreadyPresent?: number | undefined;
+    conflicts?: string[] | undefined;
+    error?: string | undefined;
+  } | null | undefined;
   content?: {
     defaultBranch: string;
     headSha: string;
@@ -64,9 +75,10 @@ function rewriteReadmeImages(md: string, artifactsRepoName: string): string {
   return out;
 }
 
-export const Home: FC<{ repos: HomeRepo[]; version: string }> = ({
+export const Home: FC<{ repos: HomeRepo[]; version: string; github?: GithubHealth | undefined }> = ({
   repos,
   version,
+  github,
 }) => (
   <Layout>
     <div class="wrap">
@@ -82,6 +94,22 @@ export const Home: FC<{ repos: HomeRepo[]; version: string }> = ({
       <p class="muted">
         GitHub stays your source of truth. This Worker mirrors into your Artifacts repos.
       </p>
+      {github ? (
+        <div class="card" style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-bottom: 8px; padding: 10px 14px;">
+          <span class="muted">Upstream</span>
+          <span>
+            <span class={`pill ${github.ok ? "ok" : "err"}`}>{github.ok ? "GitHub reachable" : "GitHub unreachable"}</span>
+            <span class="muted mono" style="margin-left:8px;">
+              {github.status !== null ? `HTTP ${github.status}` : github.detail ?? "no answer"}
+              {github.latencyMs !== null ? ` · ${github.latencyMs} ms` : ""}
+              {` · checked ${formatAgo(github.checkedAt)}`}
+            </span>
+          </span>
+          <span class="muted" style="margin-left:auto;">
+            <span class="pill ok">this mirror</span> <span class="mono">serving</span>
+          </span>
+        </div>
+      ) : null}
 
       {repos.length === 0 ? (
         <div class="empty" style="margin-top: 24px; text-align: left;">
@@ -107,6 +135,10 @@ export const Home: FC<{ repos: HomeRepo[]; version: string }> = ({
 const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
   const synced = new Map(repo.syncedRefs.map((s) => [s.ref, s]));
   const reverse = new Map((repo.reverseRefs ?? []).map((r) => [r.ref, r]));
+  const heads = repo.branches.filter((b) => b.ref.startsWith("refs/heads/"));
+  const tags = repo.branches
+    .filter((b) => b.ref.startsWith("refs/tags/") && !b.ref.endsWith("^{}"))
+    .sort((a, b) => (b.ref > a.ref ? 1 : -1));
   const mirrored = repo.branches.length > 0;
   const waiting = (repo.reverseRefs ?? []).filter((r) => r.status !== "synced");
   const nextRetry = waiting
@@ -150,7 +182,7 @@ const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
             {repo.error ? <span style="color:var(--muted); margin-left: 8px;">{repo.error}</span> : null}
             {mirrored ? (
               <span style="color:var(--muted); margin-left: 8px;">
-                {repo.branches.length} ref{repo.branches.length === 1 ? "" : "s"} in Artifacts
+                {heads.length} branch{heads.length === 1 ? "" : "es"} · {tags.length} tag{tags.length === 1 ? "" : "s"} in Artifacts
               </span>
             ) : null}
           </div>
@@ -172,13 +204,14 @@ const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
                 </tr>
               </thead>
               <tbody>
-                {repo.branches.map((b) => {
+                {heads.map((b) => {
                   const s = synced.get(b.ref);
                   const r = reverse.get(b.ref);
+                  const branch = b.ref.slice("refs/heads/".length);
                   return (
                     <tr>
                       <td class="mono">
-                        {b.ref}
+                        <a href={`/r/${repo.artifactsRepoName}/commits?ref=${encodeURIComponent(branch)}`} title="commit log">{b.ref}</a>
                         {b.isDefault ? <span class="pill ok" style="margin-left: 8px;">default</span> : null}
                       </td>
                       <td class="mono">{b.sha.slice(0, 12)}</td>
@@ -207,6 +240,39 @@ const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
         </div>
 
         <details style="margin-top: 16px;">
+          <summary style="cursor: pointer; color: var(--muted); font-size: 12px;">
+            Tags ({tags.length})
+            {repo.tagBackfill?.status === "running" ? " · backfill running…" : ""}
+            {repo.tagBackfill?.status === "failed" ? " · last backfill failed" : ""}
+          </summary>
+          {tags.length === 0 ? (
+            <div class="muted" style="margin-top: 8px; font-size: 12px;">
+              No tags on the mirror yet. New tags pushed to GitHub sync automatically; import the existing ones once with{" "}
+              <code class="mono">gitflare sync tags</code>.
+              {repo.tagBackfill?.error ? <div class="pill err" style="margin-top:6px;" title={repo.tagBackfill.error}>backfill error</div> : null}
+            </div>
+          ) : (
+            <table class="refs" style="margin-top: 8px;">
+              <tbody>
+                {tags.slice(0, 25).map((t) => (
+                  <tr>
+                    <td class="mono">
+                      <a href={`https://github.com/${repo.githubFullName}/releases/tag/${encodeURIComponent(t.ref.slice("refs/tags/".length))}`} title="on GitHub">
+                        {t.ref.slice("refs/tags/".length)}
+                      </a>
+                    </td>
+                    <td class="mono">{t.sha.slice(0, 12)}</td>
+                  </tr>
+                ))}
+                {tags.length > 25 ? (
+                  <tr><td colspan={2} class="muted">… {tags.length - 25} more (see <code>git ls-remote --tags</code> on the mirror)</td></tr>
+                ) : null}
+              </tbody>
+            </table>
+          )}
+        </details>
+
+        <details style="margin-top: 8px;">
           <summary style="cursor: pointer; color: var(--muted); font-size: 12px;">How to clone</summary>
           <pre style="margin-top: 8px; padding: 12px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); overflow-x: auto;"><code class="mono">{`# Mint a read token (Cloudflare dashboard → Artifacts → ${repo.artifactsRepoName} → Tokens)
 ARTIFACTS_TOKEN=<paste-token-here>
