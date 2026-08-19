@@ -6,6 +6,7 @@ import { runStatus } from "./commands/status.js";
 import { runAccessEnable, runAccessDisable } from "./commands/access.js";
 import { runSyncEnable, runSyncDisable, runSyncNow, runSyncStatus, runSyncTags, runSyncIssues } from "./commands/sync.js";
 import { runRemoteAdd, runRemoteRemove, runCredentialHelper } from "./commands/remote.js";
+import { runCiImport } from "./commands/import.js";
 import {
   runDeployEnable,
   runDeployDisable,
@@ -107,6 +108,12 @@ ci.command("list")
   .description("List recent CI runs for a repo")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
   .action(runCiList);
+ci.command("import")
+  .description("Translate .github/workflows/*.yml into .gitflare/ci.yml (dry run; --write saves it) with a report of what didn't map")
+  .option("--dir <path>", "workflows directory (default .github/workflows)")
+  .option("--out <path>", "output file (default .gitflare/ci.yml)")
+  .option("--write", "write the file instead of printing it")
+  .action(runCiImport);
 ci.command("cancel")
   .description("Cancel the in-flight CI run for a repo")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
