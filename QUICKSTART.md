@@ -122,11 +122,22 @@ Command reference and workflow-file syntax: [README → Other commands](./README
 
 ## GitHub-down drill
 
-What works today when github.com is unreachable:
+Set up once (each opt-in, each on your account):
 
-1. The dashboard, file browser, and `git clone` from the Artifacts remote keep working (nothing routes through GitHub).
-2. Push your work straight to the Artifacts remote (mint a *write* token; same `-c http.extraHeader=…` trick as the clone above, or `git push https://x:<token>@<remote>`).
-3. Run `gitflare ci run` (or `gitflare deploy run` if you only use CD) — the pipeline runs against the current Artifacts HEAD, on your account.
-4. When GitHub is back, push the same commits to GitHub as usual; the mirror is already up to date, so the resulting webhook sync is a no-op.
+```bash
+gitflare sync enable        # Queue + Artifacts push subscription + queue consumer; needs Queues → Edit on the token
+gitflare remote add         # in your checkout: git push now goes to GitHub AND the mirror
+```
 
-Making steps 2–4 automatic — a queue-driven trigger on pushes to the mirror, plus fast-forward reverse sync back to GitHub — is milestone M9 (see [PLAN.md §12](./PLAN.md#12-milestones-and-development-log)). This section will grow into a real drill when it lands.
+Then, when github.com is unreachable:
+
+1. Keep working. `git push` reports the GitHub leg failed (non-zero exit) — the mirror leg landed anyway.
+2. Your Worker picks the push up from the Artifacts event and runs CI/CD exactly as a GitHub push would (mode `artifacts-push` on the runs/deploys pages).
+3. The dashboard shows the branch as **waiting to reach GitHub**, retrying with backoff (30 s, 1 m, 2 m … up to 1 h).
+4. When GitHub is back, the branch lands there automatically (fast-forward only) — or run `gitflare sync now` to push immediately. GitHub's webhook for that push is recognised as already-mirrored, so nothing runs twice.
+
+Without `remote add`, push to the mirror explicitly instead (mint a write token in the dashboard, or `git push <mirror-url>` after `gitflare remote add` in a throwaway clone) — steps 2–4 are the same.
+
+What can go wrong, and what you'll see: a **protected branch** on GitHub → `rejected` (unprotect or allow the token, then `sync now`); **divergence** (different commits landed on GitHub and the mirror) → `conflict` on the mirror→GitHub side and a sync error on the GitHub→mirror side — nothing is ever forced; fetch both, merge, and push to both. Reverse pushes use the `GITHUB_TOKEN` your Worker already has; if it can't push you'll see `auth`, retried once you set a token that can (`wrangler secret put GITHUB_TOKEN`).
+
+Live-validated 2026-08-19 on `sinameraji/kimiflare`: mirror-only push → pipeline ran and GitHub had the commit within 20 s; fan-out push → one pipeline run, not two; divergence → `conflict`, GitHub untouched.

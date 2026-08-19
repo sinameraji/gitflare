@@ -47,6 +47,8 @@ A dashboard showing your repo's branches, last-synced state, file tree with synt
 - `gitflare deploy run` — deploy the current Artifacts HEAD right now (the GitHub-down escape hatch). `gitflare deploy list` / `gitflare deploy rollback [--to <id>]` — history and rollback.
 - `gitflare ci enable` / `disable` — generic CI. Commit a `.gitflare/ci.yml` (jobs, `needs:`, `run:` steps) and every push runs in a **Cloudflare Sandbox on your own account** — a full Linux container with Node + Python. A `needs`-gated deploy job ships what CI just built. Requires the **Workers Paid** plan (Containers) and two more token permissions: **Cloudchamber → Edit** and **Containers → Edit**. `--instance-type <dev|basic|standard-1..4>` sizes the runner (default `standard-1`).
 - `gitflare ci run` / `list` / `cancel` — trigger the pipeline for the current Artifacts HEAD, review runs, or stop one. Runs + live logs at `<dashboard>/r/<repo>/ci`; results post back to GitHub as commit statuses (`gitflare/ci`).
+- `gitflare sync enable` / `disable [--purge]` — **GitHub-down mode.** A Queue + Artifacts push subscription on your account (needs **Queues → Edit**): pushes straight to the mirror run CI/CD, and are pushed back to GitHub — fast-forward only, never force — once GitHub is reachable (retries with backoff; `rejected` for protected branches, `conflict` for divergence). `gitflare sync now` pushes right away; `gitflare sync status` shows both directions.
+- `gitflare remote add` / `remove` — make `git push` in a checkout fan out to GitHub **and** the mirror (second `pushurl`, GitHub first) with a credential helper that mints 10-minute Artifacts tokens on demand.
 
 Full workflow-file syntax and examples: [github.com/sinameraji/gitflare](https://github.com/sinameraji/gitflare#other-commands).
 
@@ -62,7 +64,7 @@ GitFlare itself is free — it's an MIT-licensed CLI, not a hosted service. You 
 
 ## Status
 
-Pre-alpha, built in the open. Shipped: v0.1 read replica, v0.2 continuous deploy, v0.3 core CI (sandbox jobs, `needs`-gated deploys, live logs). Next: reverse sync back to GitHub + auto-trigger on pushes to the mirror ("GitHub-down mode"), then team collaboration (v0.4) and cross-tenant federation via Cloudflare Mesh (v0.5). Roadmap and live status: [PLAN.md](https://github.com/sinameraji/gitflare/blob/main/PLAN.md).
+Pre-alpha, built in the open. Shipped: v0.1 read replica, v0.2 continuous deploy, v0.3 core CI (sandbox jobs, `needs`-gated deploys, live logs) and GitHub-down mode (mirror-triggered CI/CD + fast-forward reverse sync to GitHub, `sync` / `remote` commands). Next: the v0.3 remainder (build cache, Browser Run, Actions importer), then team collaboration (v0.4) and cross-tenant federation via Cloudflare Mesh (v0.5). Roadmap and live status: [PLAN.md](https://github.com/sinameraji/gitflare/blob/main/PLAN.md).
 
 ## License
 
