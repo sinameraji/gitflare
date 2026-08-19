@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { verifyGithubSignature } from "./github/webhook";
-import { lookupArtifactsRepoEntry, parseRepoMap, type Env } from "./env";
+import { lookupArtifactsRepoEntry, lookupByArtifactsName, parseRepoMap, type Env } from "./env";
+import { dispatchPush } from "./pipeline/dispatch";
 import { repoStubFor } from "./durable-objects/repo";
 import { listArtifactsRefs } from "./artifacts/refs";
 import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt } from "./artifacts/content";
@@ -43,6 +44,8 @@ app.get("/", async (c) => {
       artifactsRemote: entry.remote,
       branches: [],
       syncedRefs: [],
+      reverseRefs: [],
+      syncEnabled: c.env.SYNC_ENABLED === "1",
     };
     // Live state from Artifacts: refs + content (README + top-level tree).
     try {
@@ -62,8 +65,9 @@ app.get("/", async (c) => {
       const stub = repoStubFor(c.env, entry.name);
       const resp = await stub.fetch("https://repo-do/state");
       if (resp.ok) {
-        const j = (await resp.json()) as { refs: HomeRepo["syncedRefs"] };
+        const j = (await resp.json()) as { refs: HomeRepo["syncedRefs"]; reverse?: HomeRepo["reverseRefs"] };
         r.syncedRefs = j.refs;
+        r.reverseRefs = j.reverse ?? [];
       }
     } catch {
       // Soft fail.
@@ -74,15 +78,7 @@ app.get("/", async (c) => {
 });
 
 // Look up an artifacts repo name → its REPO_MAP entry + github full_name.
-function findRepoByArtifactsName(env: Env, artifactsName: string):
-  | { githubFullName: string; name: string; remote: string }
-  | undefined {
-  const map = parseRepoMap(env);
-  for (const [github, entry] of Object.entries(map)) {
-    if (entry.name === artifactsName) return { githubFullName: github, ...entry };
-  }
-  return undefined;
-}
+const findRepoByArtifactsName = lookupByArtifactsName;
 
 const CONTENT_TYPES: Record<string, string> = {
   png: "image/png",
@@ -436,6 +432,41 @@ app.post("/control/ci/cancel", async (c) => {
   return c.json((await resp.json()) as object, resp.status === 202 ? 202 : 200);
 });
 
+// ---- Sync control plane (M9) — same CONTROL_SECRET bearer -----------------
+
+app.post("/control/sync/reverse", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const { repo, ref, reconcile } = (await c.req.json().catch(() => ({}))) as {
+    repo?: string;
+    ref?: string;
+    reconcile?: boolean;
+  };
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = repoStubFor(c.env, entry.name);
+  const resp = await stub.fetch("https://repo-do/reverse/now", {
+    method: "POST",
+    body: JSON.stringify({
+      githubFullName: entry.githubFullName,
+      artifactsRepoName: entry.name,
+      remote: entry.remote,
+      ...(ref ? { ref } : {}),
+      reconcile: reconcile !== false,
+    }),
+  });
+  return c.json((await resp.json()) as object, resp.ok ? 202 : 500);
+});
+
+app.get("/control/sync/state", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const repo = c.req.query("repo");
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const stub = repoStubFor(c.env, entry.name);
+  const resp = await stub.fetch("https://repo-do/state");
+  return c.json(resp.ok ? ((await resp.json()) as object) : { refs: [], reverse: [] });
+});
+
 app.post("/webhooks/github", async (c) => {
   const signature = c.req.header("x-hub-signature-256");
   const event = c.req.header("x-github-event");
@@ -507,37 +538,23 @@ app.post("/webhooks/github", async (c) => {
           }),
         });
         if (!resp.ok) return;
+        // The RepoDO says whether this push is NEW to the mirror. When the
+        // mirror already had the sha (the webhook echo of our own reverse
+        // push, or a fan-out push that reached the mirror first), the
+        // pipeline already ran — don't run it twice.
+        const sync = (await resp.json().catch(() => ({}))) as { dispatch?: boolean };
+        if (sync.dispatch === false) return;
 
-        // Once the sync landed, exactly ONE pipeline owns the push (a single
-        // decision point — no races between two DOs deciding independently):
-        //  - CI enabled (v0.3): CiDO. It runs .gitflare/ci.yml when present and
-        //    passes plain v0.2 pushes through to DeployDO itself when it isn't.
-        //  - otherwise (v0.2): DeployDO, which no-ops without a deploy.yml and
-        //    fails closed if a ci.yml is committed but CI was never enabled.
-        if (c.env.CI_ENABLED === "1") {
-          await ciStubFor(c.env, entry.name).fetch("https://ci-do/run", {
-            method: "POST",
-            body: JSON.stringify({
-              artifactsRepoName: entry.name,
-              remote: entry.remote,
-              githubFullName: payload.repository.full_name,
-              ref: payload.ref,
-              sha: payload.after,
-              mode: "push",
-              statusTargetUrl: `${origin}/r/${entry.name}/ci`,
-            }),
-          });
-        } else {
-          await deployStubFor(c.env, entry.name).fetch("https://deploy-do/deploy", {
-            method: "POST",
-            body: JSON.stringify({
-              artifactsRepoName: entry.name,
-              remote: entry.remote,
-              ref: payload.ref,
-              sha: payload.after,
-            }),
-          });
-        }
+        // Once the sync landed, exactly ONE pipeline owns the push.
+        await dispatchPush(c.env, {
+          githubFullName: payload.repository.full_name,
+          artifactsRepoName: entry.name,
+          remote: entry.remote,
+          ref: payload.ref,
+          sha: payload.after,
+          mode: "push",
+          origin,
+        });
       })(),
     );
     return c.json({ accepted: true }, 202);

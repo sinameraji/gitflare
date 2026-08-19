@@ -14,6 +14,7 @@ import {
   type DeployWorkflow,
 } from "../deploy/workflow";
 import { parseCiWorkflow, deployStepsOf, CI_WORKFLOW_PATH } from "../ci/workflow";
+import { findDuplicateDeploy, isPushLikeMode } from "../deploy/dedupe";
 import {
   uploadWorkerScript,
   deployPages,
@@ -36,7 +37,9 @@ export interface DeployRecord {
   ref: string;
   branch: string;
   sha: string;
-  mode: "push" | "manual" | "rollback" | "ci";
+  // "artifacts-push" (M9): triggered by a push straight to the mirror, via the
+  // Artifacts queue consumer, rather than by a GitHub webhook.
+  mode: "push" | "artifacts-push" | "manual" | "rollback" | "ci";
   startedAt: number;
   finishedAt?: number;
   status: "running" | "success" | "failed" | "skipped";
@@ -55,7 +58,7 @@ interface DeployRequest {
   remote: string;
   ref: string;
   sha: string;
-  mode?: "push" | "manual" | "ci";
+  mode?: "push" | "artifacts-push" | "manual" | "ci";
   // mode "ci" only: the CI pipeline names the workflow file + deploy job it is
   // delegating, and may override entry files with sandbox-built artifacts so
   // the deploy ships what CI just built instead of a stale committed file.
@@ -270,6 +273,17 @@ export class DeployDO {
     const mode = req.mode ?? "push";
     if (mode === "ci") return this.runCiDelegatedDeploy(req);
 
+    // Duplicate delivery of a push we already deployed (GitHub redelivery, or
+    // the second leg of a fan-out push arriving via the Artifacts event) —
+    // don't ship the same commit twice. Cheap: history read, no clone.
+    if (isPushLikeMode(mode) && req.ref && /^[0-9a-f]{40}$/.test(req.sha)) {
+      const dup = findDuplicateDeploy(await this.history(), branchOf(req.ref), req.sha);
+      if (dup) {
+        const rec = await this.begin(req.ref, req.sha, mode);
+        return this.finish(rec, "skipped", `duplicate delivery for ${req.sha.slice(0, 8)} — already deployed as #${dup.id}`);
+      }
+    }
+
     // Clone first so a manual run (empty ref/sha — the GitHub-down escape hatch)
     // can learn the current default branch + tip from Artifacts directly.
     let shallow: ShallowRepo;
@@ -286,7 +300,7 @@ export class DeployDO {
     // v0.3: when a ci.yml is committed, the CI pipeline owns pushes. Fail
     // CLOSED rather than run deploy.yml ungated — the user added `needs:`
     // gating on purpose, and deploying around it would ship untested code.
-    if (mode === "push" && (await this.ciFileExists(shallow, shallow.headSha))) {
+    if (isPushLikeMode(mode) && (await this.ciFileExists(shallow, shallow.headSha))) {
       const rec = await this.begin(ref, sha, mode);
       return this.finish(
         rec,

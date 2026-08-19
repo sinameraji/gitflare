@@ -11,7 +11,26 @@ export interface HomeRepo {
   /** Refs currently in the Artifacts repo (from the live git protocol). */
   branches: Array<{ ref: string; sha: string; isDefault?: boolean }>;
   /** Refs we've handled via webhook sync (last synced time per ref). */
-  syncedRefs: Array<{ ref: string; sha: string; syncedAt: number }>;
+  syncedRefs: Array<{
+    ref: string;
+    sha: string;
+    syncedAt: number;
+    source?: "github" | "artifacts" | undefined;
+    forwardError?: string | undefined;
+  }>;
+  /** M9: reverse-sync (mirror → GitHub) state per ref. */
+  reverseRefs: Array<{
+    ref: string;
+    sha: string;
+    status: "pending" | "synced" | "conflict" | "rejected" | "auth" | "error" | "stalled";
+    attempts: number;
+    lastError?: string | undefined;
+    nextAttemptAt?: number | undefined;
+    syncedAt?: number | undefined;
+    githubSha?: string | undefined;
+  }>;
+  /** `gitflare sync enable` is active on this Worker. */
+  syncEnabled?: boolean | undefined;
   content?: {
     defaultBranch: string;
     headSha: string;
@@ -87,10 +106,28 @@ export const Home: FC<{ repos: HomeRepo[]; version: string }> = ({
 
 const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
   const synced = new Map(repo.syncedRefs.map((s) => [s.ref, s]));
+  const reverse = new Map((repo.reverseRefs ?? []).map((r) => [r.ref, r]));
   const mirrored = repo.branches.length > 0;
+  const waiting = (repo.reverseRefs ?? []).filter((r) => r.status !== "synced");
+  const nextRetry = waiting
+    .map((r) => r.nextAttemptAt)
+    .filter((t): t is number => typeof t === "number")
+    .sort((a, b) => a - b)[0];
   return (
     <>
       <h2>{repo.githubFullName}</h2>
+      {waiting.length > 0 ? (
+        <div class="banner">
+          <strong>
+            {waiting.length} ref{waiting.length === 1 ? "" : "s"} waiting to reach GitHub
+          </strong>
+          {" — "}
+          {waiting.map((r) => `${r.ref.replace(/^refs\/heads\//, "")} (${r.status})`).join(", ")}
+          {nextRetry ? ` · next retry ${formatIn(nextRetry)}` : ""}
+          {" · "}
+          <code class="mono">gitflare sync now</code> pushes them right away.
+        </div>
+      ) : null}
       <div class="card">
         <div class="kv">
           <div class="k">GitHub</div>
@@ -129,13 +166,15 @@ const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
               <thead>
                 <tr>
                   <th>Ref</th>
-                  <th>SHA</th>
-                  <th>Last synced via webhook</th>
+                  <th>SHA (mirror)</th>
+                  <th>GitHub → Artifacts</th>
+                  <th>Artifacts → GitHub</th>
                 </tr>
               </thead>
               <tbody>
                 {repo.branches.map((b) => {
                   const s = synced.get(b.ref);
+                  const r = reverse.get(b.ref);
                   return (
                     <tr>
                       <td class="mono">
@@ -143,7 +182,22 @@ const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
                         {b.isDefault ? <span class="pill ok" style="margin-left: 8px;">default</span> : null}
                       </td>
                       <td class="mono">{b.sha.slice(0, 12)}</td>
-                      <td style="color: var(--muted);">{s ? formatAgo(s.syncedAt) : <em>import seed</em>}</td>
+                      <td style="color: var(--muted);">
+                        {s && s.syncedAt ? (
+                          <>
+                            {formatAgo(s.syncedAt)}
+                            {s.source === "artifacts" ? " (pushed to mirror)" : ""}
+                          </>
+                        ) : (
+                          <em>import seed</em>
+                        )}
+                        {s?.forwardError ? (
+                          <div class="pill err" title={s.forwardError} style="margin-top: 4px;">
+                            sync error
+                          </div>
+                        ) : null}
+                      </td>
+                      <td style="color: var(--muted);"><ReverseCell entry={r} syncEnabled={!!repo.syncEnabled} /></td>
                     </tr>
                   );
                 })}
@@ -234,6 +288,38 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+const ReverseCell: FC<{ entry: HomeRepo["reverseRefs"][number] | undefined; syncEnabled: boolean }> = ({
+  entry,
+  syncEnabled,
+}) => {
+  if (!entry) return <span title="Nothing pushed to the mirror directly for this ref">{syncEnabled ? "—" : <em>sync off</em>}</span>;
+  switch (entry.status) {
+    case "synced":
+      return <span class="pill ok" title={entry.githubSha ? `GitHub at ${entry.githubSha.slice(0, 12)}` : ""}>synced{entry.syncedAt ? ` ${formatAgo(entry.syncedAt)}` : ""}</span>;
+    case "pending":
+    case "error":
+    case "auth":
+      return (
+        <span class="pill warn" title={entry.lastError ?? ""}>
+          {entry.status === "pending" && entry.attempts === 0 ? "queued" : `retrying (${entry.status}, ${entry.attempts}×)`}
+          {entry.nextAttemptAt ? ` · ${formatIn(entry.nextAttemptAt)}` : ""}
+        </span>
+      );
+    case "conflict":
+    case "rejected":
+    case "stalled":
+      return <span class="pill err" title={entry.lastError ?? ""}>{entry.status}</span>;
+  }
+};
+
+function formatIn(ms: number): string {
+  const diff = ms - Date.now();
+  if (diff <= 0) return "now";
+  if (diff < 60_000) return `in ${Math.round(diff / 1000)}s`;
+  if (diff < 3_600_000) return `in ${Math.round(diff / 60_000)}m`;
+  return `in ${Math.round(diff / 3_600_000)}h`;
 }
 
 function formatBytes(n: number): string {

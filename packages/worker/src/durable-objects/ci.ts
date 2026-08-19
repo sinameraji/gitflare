@@ -28,6 +28,8 @@ import { interpretDeployResponse } from "../ci/delegation";
 import { deployStubFor, type DeployRecord } from "./deploy";
 
 const MAX_LOG_LINES = 500;
+/** Webhook pushes and Artifacts-event pushes are handled identically. */
+const isPushLike = (mode: string | undefined): boolean => mode === undefined || mode === "push" || mode === "artifacts-push";
 /** Slack added on top of the summed job budgets before the watchdog fires. */
 const WATCHDOG_SLACK_MS = 10 * 60_000;
 const SANDBOX_READ_TOKEN_TTL_S = 600;
@@ -45,7 +47,8 @@ export interface CiRunRecord {
   ref: string;
   branch: string;
   sha: string;
-  mode: "push" | "manual";
+  // "artifacts-push" (M9): a push straight to the mirror, via the queue consumer.
+  mode: "push" | "artifacts-push" | "manual";
   startedAt: number;
   finishedAt?: number;
   status: "running" | "success" | "failed" | "skipped";
@@ -64,7 +67,7 @@ export interface CiRunRequest {
   githubFullName: string;
   ref: string; // "" for manual (learned from the mirror's HEAD)
   sha: string; // "" for manual
-  mode?: "push" | "manual";
+  mode?: "push" | "artifacts-push" | "manual";
   statusTargetUrl?: string;
 }
 
@@ -110,7 +113,7 @@ export class CiDO {
 
     if (request.method === "POST" && url.pathname === "/run") {
       const body = (await request.json()) as CiRunRequest;
-      if ((body.mode ?? "push") === "push" && body.ref) {
+      if (isPushLike(body.mode) && body.ref) {
         this.latestPushSha.set(branchOf(body.ref), body.sha);
       }
       // Chain behind any in-flight run, but do NOT hold this request open for
@@ -357,7 +360,7 @@ export class CiDO {
   private async executeRunInner(req: CiRunRequest): Promise<void> {
     const mode = req.mode ?? "push";
 
-    if (mode === "push" && req.ref && /^[0-9a-f]{40}$/.test(req.sha)) {
+    if (isPushLike(mode) && req.ref && /^[0-9a-f]{40}$/.test(req.sha)) {
       const branch = branchOf(req.ref);
       // A queued push superseded by a newer push to the same branch is skipped
       // before it costs a clone or a sandbox.
@@ -373,7 +376,7 @@ export class CiDO {
       // again. A genuine new push carries a new sha and passes this check.
       const done = (await this.history()).some(
         (r) =>
-          r.mode === "push" &&
+          isPushLike(r.mode) &&
           r.sha === req.sha &&
           r.branch === branch &&
           (r.status === "success" || r.status === "failed"),
@@ -393,7 +396,7 @@ export class CiDO {
     let sha = req.sha;
     try {
       const handle = await this.env.ARTIFACTS.get(req.artifactsRepoName);
-      if (mode === "push" && ref && /^[0-9a-f]{40}$/.test(sha)) {
+      if (isPushLike(mode) && ref && /^[0-9a-f]{40}$/.test(sha)) {
         shallow = await cloneRepoAtRef(handle, req.remote, branchOf(ref), sha);
       } else {
         shallow = await cloneRepoShallow(handle, req.remote);
@@ -411,7 +414,7 @@ export class CiDO {
     // without minting a CI run record.
     const blob = await readBlobAtCommit(shallow, sha, CI_WORKFLOW_PATH).catch(() => null);
     if (!blob || blob.isBinary || !blob.text) {
-      if (mode === "push") {
+      if (isPushLike(mode)) {
         await this.delegatePlainDeploy(req);
       } else {
         const rec = await this.begin(req, ref, sha, mode, []);
@@ -479,6 +482,7 @@ export class CiDO {
           remote: req.remote,
           ref: req.ref,
           sha: req.sha,
+          mode: req.mode ?? "push",
         }),
       })
       .catch(() => undefined);
