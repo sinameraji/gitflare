@@ -32,6 +32,15 @@ export interface HomeRepo {
   }>;
   /** `gitflare sync enable` is active on this Worker. */
   syncEnabled?: boolean | undefined;
+  /** Issues / PRs / releases mirror counts. */
+  meta?: {
+    openIssues: number;
+    issues: number;
+    openPulls: number;
+    pulls: number;
+    releases: number;
+    backfill: { status: string } | null;
+  } | undefined;
   /** Last `gitflare sync tags` backfill, if any. */
   tagBackfill?: {
     status: "running" | "done" | "failed";
@@ -170,6 +179,17 @@ const RepoCard: FC<{ repo: HomeRepo }> = ({ repo }) => {
           <div class="v">{repo.artifactsRepoName}</div>
           <div class="k">Clone URL</div>
           <div class="v">{repo.artifactsRemote || "—"}</div>
+          <div class="k">Metadata</div>
+          <div class="v">
+            <a href={`/r/${repo.artifactsRepoName}/issues`}>{repo.meta ? `${repo.meta.openIssues} open issue${repo.meta.openIssues === 1 ? "" : "s"}` : "issues"}</a>
+            {" · "}
+            <a href={`/r/${repo.artifactsRepoName}/pulls`}>{repo.meta ? `${repo.meta.openPulls} open PR${repo.meta.openPulls === 1 ? "" : "s"}` : "pull requests"}</a>
+            {" · "}
+            <a href={`/r/${repo.artifactsRepoName}/releases`}>{repo.meta ? `${repo.meta.releases} release${repo.meta.releases === 1 ? "" : "s"}` : "releases"}</a>
+            {" · "}
+            <a href={`/r/${repo.artifactsRepoName}/commits`}>commits</a>
+            {repo.meta && !repo.meta.backfill ? <span class="muted" style="margin-left: 8px;">(read-only mirror; imports on first visit)</span> : null}
+          </div>
           <div class="k">Status</div>
           <div class="v">
             {repo.error ? (

@@ -35,7 +35,7 @@ describe("tomlFor — sync (M9)", () => {
   });
   it("keeps the four DO migrations and core bindings regardless of sync", () => {
     const t = tomlFor("worker.js", { ...base, sync: { provisioned: true, enabled: true, queueName: "q" } }, "0.4.0");
-    for (const cls of ["RepoDO", "DeployDO", "CiDO", "Sandbox"]) expect(t).toContain(`new_sqlite_classes = ["${cls}"]`);
+    for (const cls of ["RepoDO", "DeployDO", "CiDO", "Sandbox", "MetaDO"]) expect(t).toContain(`new_sqlite_classes = ["${cls}"]`);
     expect(t).toContain('binding = "ARTIFACTS"');
     expect(t).toContain('name = "REPO"');
     expect(t).not.toContain("[[containers]]"); // CI not provisioned here

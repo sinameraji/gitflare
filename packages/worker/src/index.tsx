@@ -7,6 +7,9 @@ import { repoStubFor } from "./durable-objects/repo";
 import { listArtifactsRefs } from "./artifacts/refs";
 import { cloneRepoShallow, getRepoContent, listTreeAt, readBlobAt, listCommits } from "./artifacts/content";
 import { Commits } from "./ui/commits";
+import { IssueList, IssueDetail, Releases } from "./ui/issues";
+import { metaStubFor, type MetaState } from "./durable-objects/meta";
+import type { IssueRecord, PullRecord, ReleaseRecord, CommentRecord } from "./meta/map";
 import { probeGithub } from "./github/health";
 import { Browse } from "./ui/browse";
 import { Home, type HomeRepo } from "./ui/home";
@@ -20,6 +23,7 @@ import { ciStubFor, type CiRunRecord } from "./durable-objects/ci";
 export { RepoDO } from "./durable-objects/repo";
 export { DeployDO } from "./durable-objects/deploy";
 export { CiDO } from "./durable-objects/ci";
+export { MetaDO } from "./durable-objects/meta";
 // The Sandbox container class must be exported for the (optional) SANDBOX
 // binding + [[containers]] block that `gitflare ci enable` adds; inert unless
 // the deployed config binds it.
@@ -78,6 +82,13 @@ app.get("/", async (c) => {
         r.reverseRefs = j.reverse ?? [];
         r.tagBackfill = j.tagBackfill ?? null;
       }
+    } catch {
+      // Soft fail.
+    }
+    // Issues / PRs / releases counts from the metadata mirror.
+    try {
+      const resp = await metaStubFor(c.env, entry.name).fetch("https://meta-do/counts");
+      if (resp.ok) r.meta = (await resp.json()) as HomeRepo["meta"];
     } catch {
       // Soft fail.
     }
@@ -194,6 +205,86 @@ app.get("/r/:name/blob/*", async (c) => {
 // Raw blob proxy — serves file bytes straight from the Artifacts mirror. Used
 // for README images so they render for private repos and survive GitHub
 // outages. Under /r/* so the Access guard already covers it.
+// ---- Read-only issues / pull requests / releases (Stage 1) -----------------
+
+async function metaShell(c: { env: Env; executionCtx: ExecutionContext }, name: string) {
+  const repo = findRepoByArtifactsName(c.env, name);
+  if (!repo) return null;
+  const stub = metaStubFor(c.env, repo.name);
+  const meta = (await stub.fetch("https://meta-do/meta").then((r) => r.json()).catch(() => ({}))) as MetaState;
+  // First visit: import history in the background; the page renders what's there.
+  if (!meta.backfill) {
+    c.executionCtx.waitUntil(
+      stub.fetch("https://meta-do/backfill", { method: "POST", body: JSON.stringify({ githubFullName: repo.githubFullName }) }),
+    );
+  }
+  return { repo, stub, meta };
+}
+
+async function pullNumbers(stub: DurableObjectStub): Promise<Set<number>> {
+  const j = (await stub.fetch("https://meta-do/pulls").then((r) => r.json()).catch(() => ({ items: [] }))) as { items: PullRecord[] };
+  return new Set(j.items.map((p) => p.number));
+}
+
+for (const kind of ["issues", "pulls"] as const) {
+  app.get(`/r/:name/${kind}`, async (c) => {
+    const name = c.req.param("name");
+    const sh = await metaShell(c, name);
+    if (!sh) return c.html(<NotFound title="Unknown repo" detail={`No mirror named ${name}.`} />, 404);
+    const j = (await sh.stub.fetch(`https://meta-do/${kind}`).then((r) => r.json())) as { items: Array<IssueRecord | PullRecord> };
+    const filter = (c.req.query("state") === "closed" ? "closed" : c.req.query("state") === "all" ? "all" : "open") as "open" | "closed" | "all";
+    return c.html(
+      <IssueList githubFullName={sh.repo.githubFullName} artifactsRepoName={sh.repo.name} backfill={sh.meta.backfill} kind={kind} items={j.items} filter={filter} />,
+    );
+  });
+  app.get(`/r/:name/${kind}/:number`, async (c) => {
+    const name = c.req.param("name");
+    const n = Number(c.req.param("number"));
+    const sh = await metaShell(c, name);
+    if (!sh) return c.html(<NotFound title="Unknown repo" detail={`No mirror named ${name}.`} />, 404);
+    if (!Number.isInteger(n)) return c.html(<NotFound title="Not found" detail="Bad number." backHref={`/r/${name}/${kind}`} />, 404);
+    const resp = await sh.stub.fetch(`https://meta-do/${kind}/${n}`);
+    if (resp.status === 404) {
+      const other = kind === "issues" ? "pulls" : "issues";
+      const alt = await sh.stub.fetch(`https://meta-do/${other}/${n}`);
+      if (alt.ok) return c.redirect(`/r/${name}/${other}/${n}`);
+      return c.html(
+        <NotFound
+          title={`#${n} not mirrored`}
+          detail={`Not in the mirror (yet). It may predate the import, or the import is still running.`}
+          backHref={`/r/${name}/${kind}`}
+          backLabel={`← Back to ${kind}`}
+        />,
+        404,
+      );
+    }
+    const j = (await resp.json()) as { item: IssueRecord | PullRecord; comments: CommentRecord[] };
+    const pulls = await pullNumbers(sh.stub);
+    return c.html(
+      <IssueDetail
+        githubFullName={sh.repo.githubFullName}
+        artifactsRepoName={sh.repo.name}
+        backfill={sh.meta.backfill}
+        kind={kind}
+        item={j.item}
+        comments={j.comments}
+        isPull={(x) => pulls.has(x)}
+      />,
+    );
+  });
+}
+
+app.get("/r/:name/releases", async (c) => {
+  const name = c.req.param("name");
+  const sh = await metaShell(c, name);
+  if (!sh) return c.html(<NotFound title="Unknown repo" detail={`No mirror named ${name}.`} />, 404);
+  const j = (await sh.stub.fetch("https://meta-do/releases").then((r) => r.json())) as { items: ReleaseRecord[] };
+  const pulls = await pullNumbers(sh.stub);
+  return c.html(
+    <Releases githubFullName={sh.repo.githubFullName} artifactsRepoName={sh.repo.name} backfill={sh.meta.backfill} items={j.items} isPull={(x) => pulls.has(x)} />,
+  );
+});
+
 app.get("/r/:name/commits", async (c) => {
   const name = c.req.param("name");
   const repo = findRepoByArtifactsName(c.env, name);
@@ -508,6 +599,18 @@ app.post("/control/sync/tags", async (c) => {
   return c.json((await resp.json()) as object, resp.status === 202 ? 202 : 500);
 });
 
+app.post("/control/meta/backfill", async (c) => {
+  if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
+  const { repo, force } = (await c.req.json().catch(() => ({}))) as { repo?: string; force?: boolean };
+  const entry = repo ? findRepoByArtifactsName(c.env, repo) : undefined;
+  if (!entry) return c.json({ error: "unknown repo" }, 404);
+  const resp = await metaStubFor(c.env, entry.name).fetch("https://meta-do/backfill", {
+    method: "POST",
+    body: JSON.stringify({ githubFullName: entry.githubFullName, force: force !== false }),
+  });
+  return c.json((await resp.json()) as object, resp.status === 202 ? 202 : 200);
+});
+
 app.get("/control/sync/state", async (c) => {
   if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
   const repo = c.req.query("repo");
@@ -626,6 +729,21 @@ app.post("/webhooks/github", async (c) => {
       })(),
     );
     return c.json({ accepted: true }, 202);
+  }
+
+  // Issues / PRs / comments / reviews / releases → the read-only metadata mirror.
+  if (event === "issues" || event === "pull_request" || event === "issue_comment" || event === "pull_request_review" || event === "release") {
+    const payload = JSON.parse(body) as { action?: string; repository?: { full_name?: string } };
+    const full = payload.repository?.full_name;
+    const entry = full ? lookupArtifactsRepoEntry(c.env, full) : undefined;
+    if (!entry) return c.json({ error: "unknown repo", github: full }, 404);
+    c.executionCtx.waitUntil(
+      metaStubFor(c.env, entry.name).fetch("https://meta-do/event", {
+        method: "POST",
+        body: JSON.stringify({ event, action: payload.action, payload }),
+      }),
+    );
+    return c.json({ accepted: true, mirrored: event }, 202);
   }
 
   return c.json({ accepted: true, skipped: event }, 202);
