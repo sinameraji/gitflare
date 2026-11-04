@@ -12,6 +12,7 @@ import { metaStubFor, type MetaState } from "./durable-objects/meta";
 import type { IssueRecord, PullRecord, ReleaseRecord, CommentRecord } from "./meta/map";
 import { probeGithub } from "./github/health";
 import { Browse } from "./ui/browse";
+import { registerBlameRoutes } from "./routes/blame";
 import { Home, type HomeRepo } from "./ui/home";
 import { Deployments } from "./ui/deployments";
 import { Runs } from "./ui/runs";
@@ -201,6 +202,9 @@ app.get("/r/:name/blob/*", async (c) => {
     return c.html(<ErrorView detail={(err as Error).message} backHref={`/r/${name}/tree/`} />, 500);
   }
 });
+
+// Blame — /r/:name/blame/:ref/*path, under /r/* so the Access guard covers it.
+registerBlameRoutes(app);
 
 // Raw blob proxy — serves file bytes straight from the Artifacts mirror. Used
 // for README images so they render for private repos and survive GitHub

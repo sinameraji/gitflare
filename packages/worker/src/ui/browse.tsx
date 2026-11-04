@@ -3,6 +3,7 @@ import { raw } from "hono/html";
 import { Layout } from "./layout";
 import { LOGO_PNG_DATA_URL } from "./logo-data";
 import { highlightCode } from "./highlight";
+import { blameHref } from "./blame";
 import type { TreeEntry, BlobAtPath } from "../artifacts/content";
 
 interface BrowseProps {
@@ -38,7 +39,7 @@ export const Browse: FC<BrowseProps> = (p) => (
       </div>
 
       {p.entries ? <TreeView repoName={p.artifactsRepoName} basePath={p.path} entries={p.entries} /> : null}
-      {p.blob ? <BlobView blob={p.blob} /> : null}
+      {p.blob ? <BlobView blob={p.blob} repoName={p.artifactsRepoName} branch={p.branchName} /> : null}
     </div>
   </Layout>
 );
@@ -122,7 +123,7 @@ const TreeView: FC<{ repoName: string; basePath: string; entries: TreeEntry[] }>
 const PRE_STYLE =
   "margin: 0; padding: 12px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; max-height: 70vh;";
 
-const BlobView: FC<{ blob: BlobAtPath }> = ({ blob }) => {
+const BlobView: FC<{ blob: BlobAtPath; repoName: string; branch: string }> = ({ blob, repoName, branch }) => {
   const text = blob.text ?? "";
   const highlighted = blob.isBinary ? null : highlightCode(text, blob.path);
   return (
@@ -131,6 +132,12 @@ const BlobView: FC<{ blob: BlobAtPath }> = ({ blob }) => {
         {formatBytes(blob.size)}
         {blob.isBinary ? " · binary" : ""}
         {highlighted ? ` · ${highlighted.lang}` : ""}
+        {blob.isBinary ? null : (
+          <>
+            {" · "}
+            <a href={blameHref(repoName, branch, blob.path)}>blame</a>
+          </>
+        )}
       </div>
       {blob.isBinary ? (
         <div class="empty">Binary file — preview not shown.</div>
