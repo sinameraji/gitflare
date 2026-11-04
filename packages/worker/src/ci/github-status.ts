@@ -12,6 +12,8 @@ export interface CommitStatusParams {
   state: CommitState;
   description: string;
   targetUrl?: string;
+  /** Status context; defaults to the overall `gitflare/ci`. */
+  context?: string;
   token: string;
   fetchImpl?: typeof fetch;
 }
@@ -22,17 +24,20 @@ export interface CommitStatusResult {
   detail?: string;
 }
 
-const CONTEXT = "gitflare/ci";
-const MAX_DESCRIPTION = 140; // GitHub caps description length
+export const CI_CONTEXT = "gitflare/ci";
+export const MAX_DESCRIPTION = 140; // GitHub caps description length
+/** Don't let a hung api.github.com stall the pipeline: statuses are best-effort. */
+const POST_TIMEOUT_MS = 10_000;
+
+export function truncateDescription(d: string): string {
+  return d.length > MAX_DESCRIPTION ? `${d.slice(0, MAX_DESCRIPTION - 1)}…` : d;
+}
 
 export function buildStatusRequest(p: CommitStatusParams): { url: string; init: RequestInit } {
   const body: Record<string, string> = {
     state: p.state,
-    context: CONTEXT,
-    description:
-      p.description.length > MAX_DESCRIPTION
-        ? `${p.description.slice(0, MAX_DESCRIPTION - 1)}…`
-        : p.description,
+    context: p.context ?? CI_CONTEXT,
+    description: truncateDescription(p.description),
   };
   if (p.targetUrl) body.target_url = p.targetUrl;
   return {
@@ -55,7 +60,11 @@ export async function postCommitStatus(p: CommitStatusParams): Promise<CommitSta
   const fetchImpl = p.fetchImpl ?? fetch;
   const { url, init } = buildStatusRequest(p);
   try {
-    const resp = await fetchImpl(url, init);
+    const signal =
+      typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+        ? AbortSignal.timeout(POST_TIMEOUT_MS)
+        : undefined;
+    const resp = await fetchImpl(url, signal ? { ...init, signal } : init);
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       return { ok: false, status: resp.status, detail: text.slice(0, 200) };

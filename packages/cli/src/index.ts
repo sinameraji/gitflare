@@ -7,6 +7,7 @@ import { runAccessEnable, runAccessDisable } from "./commands/access.js";
 import { runSyncEnable, runSyncDisable, runSyncNow, runSyncStatus, runSyncTags, runSyncIssues } from "./commands/sync.js";
 import { runRemoteAdd, runRemoteRemove, runCredentialHelper } from "./commands/remote.js";
 import { runCiImport } from "./commands/import.js";
+import { runLogs } from "./commands/logs.js";
 import {
   runDeployEnable,
   runDeployDisable,
@@ -118,6 +119,15 @@ ci.command("cancel")
   .description("Cancel the in-flight CI run for a repo")
   .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
   .action(runCiCancel);
+
+program
+  .command("logs")
+  .description("Print a CI run's job logs (latest run by default); --follow streams until the run ends")
+  .argument("[run-id]", "run number from `gitflare ci list` (default: latest)")
+  .option("--job <name>", "only this job's lines")
+  .option("-f, --follow", "keep printing new lines until the run finishes (exit 1 if it failed)")
+  .option("--repo <repo>", "github full name or artifacts repo name; prompts if omitted")
+  .action(runLogs);
 
 const sync = program
   .command("sync")
