@@ -70,6 +70,7 @@ function runJob(steps: string[], overrides: Partial<CiJob> = {}): CiJob {
     needs: [],
     steps: steps.map((command) => ({ type: "run" as const, command })),
     env: {},
+    secrets: [],
     timeoutMinutes: 15,
     ...overrides,
   };

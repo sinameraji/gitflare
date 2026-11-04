@@ -195,6 +195,30 @@ export class CloudflareClient {
   ): Promise<{ id: string; plaintext: string; expires_at: string; scope: string }> {
     return this.req("POST", `/accounts/${accountId}/artifacts/namespaces/${namespace}/tokens`, params);
   }
+
+  // --- Worker Secrets (CI secrets store, M10) ---
+  // Same API wrangler's `secret put/list/delete` use. Values are write-only:
+  // the list endpoint returns names + types, never values. Each put/delete
+  // creates and deploys a new Worker version.
+
+  async putWorkerSecret(accountId: string, scriptName: string, name: string, text: string): Promise<void> {
+    await this.req("PUT", `/accounts/${accountId}/workers/scripts/${encodeURIComponent(scriptName)}/secrets`, {
+      name,
+      text,
+      type: "secret_text",
+    });
+  }
+
+  async listWorkerSecrets(accountId: string, scriptName: string): Promise<Array<{ name: string; type: string }>> {
+    return this.req("GET", `/accounts/${accountId}/workers/scripts/${encodeURIComponent(scriptName)}/secrets`);
+  }
+
+  async deleteWorkerSecret(accountId: string, scriptName: string, name: string): Promise<void> {
+    await this.req(
+      "DELETE",
+      `/accounts/${accountId}/workers/scripts/${encodeURIComponent(scriptName)}/secrets/${encodeURIComponent(name)}`,
+    );
+  }
 }
 
 export interface EventSubscription {

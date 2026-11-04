@@ -23,6 +23,12 @@ import {
   makeScrubber,
   type SandboxHandle,
 } from "../ci/sandbox-runner";
+import {
+  allSecretValues,
+  missingSecretsMessage,
+  resolveJobEnv,
+  secretLookupFromEnv,
+} from "../ci/secrets";
 import { postCommitStatus, type CommitState } from "../ci/github-status";
 import { interpretDeployResponse } from "../ci/delegation";
 import { jobCommitStatus } from "../ci/job-status";
@@ -611,7 +617,11 @@ export class CiDO {
     // bits the loop body needs as thunks instead of comparing the `let` direct.
     let cloneState: "pending" | "ok" | "failed" = "pending";
     const cloneOk = (): boolean => cloneState === "ok";
-    let scrub: (line: string) => string = (l) => l;
+    // Every CI secret bound on the Worker is scrubbed from every line of the
+    // run — not just the ones a job maps into env: jobs share a workspace, so
+    // a value written to disk by one job could be printed by another.
+    const secretValues = allSecretValues(this.env);
+    let scrub: (line: string) => string = makeScrubber(secretValues);
     let failedJob: string | undefined;
 
     const statusOf = (name: string): CiJobRecord["status"] =>
@@ -660,7 +670,7 @@ export class CiDO {
                   if (cloneState !== "pending") return cloneState === "ok";
                   const repoHandle = await this.env.ARTIFACTS.get(req.artifactsRepoName);
                   const tokenSecret = await mintReadPassword(repoHandle, SANDBOX_READ_TOKEN_TTL_S);
-                  scrub = makeScrubber([tokenSecret]);
+                  scrub = makeScrubber([tokenSecret, ...secretValues]);
                   sandboxCreated = true;
                   const res = await cloneIntoSandbox(this.sandbox(rec.id), {
                     remote: req.remote,
@@ -720,6 +730,18 @@ export class CiDO {
     sha: string,
     io: { ensureClone: () => Promise<boolean>; scrub: (l: string) => string },
   ): Promise<{ ok: boolean; steps: Array<{ label: string; ok: boolean; detail?: string }>; message?: string }> {
+    // Resolve `${{ secrets.* }}` BEFORE spending a clone: an unset secret is a
+    // clear job failure, never a job running with a hole in its env.
+    let env = job.env;
+    if (job.secrets.length > 0) {
+      const resolved = resolveJobEnv(job.env, secretLookupFromEnv(this.env));
+      if (!resolved.env) {
+        return { ok: false, steps: [], message: missingSecretsMessage(resolved.missing ?? []) };
+      }
+      env = resolved.env;
+      // Names only — values never reach the log.
+      this.log(`[${job.name}] secrets injected as env: ${job.secrets.join(", ")}`);
+    }
     const cloned = await io.ensureClone().catch((e) => {
       this.log(`[${job.name}] ${io.scrub((e as Error).message)}`);
       return false;
@@ -730,6 +752,7 @@ export class CiDO {
     try {
       const result = await runJobSteps(this.sandbox(rec.id), {
         job,
+        env,
         meta: { repo: req.artifactsRepoName, branch, sha },
         log: (l) => this.log(`[${job.name}] ${io.scrub(l)}`),
       });
@@ -738,9 +761,9 @@ export class CiDO {
         steps: result.steps.map((s) => ({
           label: s.command,
           ok: s.ok,
-          ...(s.detail ? { detail: s.detail } : {}),
+          ...(s.detail ? { detail: io.scrub(s.detail) } : {}),
         })),
-        ...(result.message ? { message: result.message } : {}),
+        ...(result.message ? { message: io.scrub(result.message) } : {}),
       };
     } catch (e) {
       return { ok: false, steps: [], message: io.scrub((e as Error).message) };

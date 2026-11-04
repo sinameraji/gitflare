@@ -59,6 +59,10 @@ export interface Env {
   // The Cloudflare Sandbox container namespace — present only after
   // `gitflare ci enable` adds the [[containers]] block to the Worker config.
   SANDBOX?: DurableObjectNamespace;
+
+  // CI secrets (M10): Worker Secrets set by `gitflare secrets set NAME`,
+  // stored as CI_SECRET_<NAME>. Read only by the CI runner (ci/secrets.ts).
+  [ciSecret: `CI_SECRET_${string}`]: string | undefined;
 }
 
 export function parseRepoMap(env: Env): RepoMap {

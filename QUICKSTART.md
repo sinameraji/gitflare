@@ -116,7 +116,7 @@ Lists all repos you've provisioned and where their Workers live.
 
 - **Private dashboard:** `gitflare access enable` — Cloudflare Access SSO in front of the UI/API (needs *Access: Apps and Policies → Edit* on your token).
 - **Continuous deploy:** `gitflare deploy enable` + a `.gitflare/deploy.yml` — pushes ship your pre-built Worker/Pages site from your own account.
-- **Generic CI:** `gitflare ci enable` + a `.gitflare/ci.yml` — jobs run in a Cloudflare Sandbox on your account (Workers Paid; needs *Cloudchamber → Edit* and *Containers → Edit*).
+- **Generic CI:** `gitflare ci enable` + a `.gitflare/ci.yml` — jobs run in a Cloudflare Sandbox on your account (Workers Paid; needs *Cloudchamber → Edit* and *Containers → Edit*). Jobs that need credentials: `gitflare secrets set NPM_TOKEN` (paste at the hidden prompt, or pipe it in), then `NPM_TOKEN: ${{ secrets.NPM_TOKEN }}` under the job's `env:` — masked in logs, never on a command line.
 
 Command reference and workflow-file syntax: [README → Other commands](./README.md#other-commands).
 

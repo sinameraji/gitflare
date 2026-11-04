@@ -21,6 +21,10 @@
 // Sandbox) or a deploy job (only `cloudflare/deploy:` steps, delegated to the
 // DeployDO) — mixing the two in one job is a parse error, matching the GitHub
 // Actions mental model of jobs as isolated machines.
+//
+// Secrets: a run job's `env:` values may reference `${{ secrets.NAME }}`
+// (set with `gitflare secrets set NAME`); resolved at run time, injected as
+// env only, scrubbed from logs. See ./secrets.ts.
 
 import { parseYaml, type YamlValue } from "../deploy/yaml";
 import {
@@ -32,6 +36,7 @@ import {
   branchOf,
   type DeployStep,
 } from "../deploy/workflow";
+import { containsSecretRef, secretRefsIn } from "./secrets";
 
 export interface CiRunStep {
   type: "run";
@@ -48,7 +53,13 @@ export interface CiJob {
   kind: "run" | "deploy";
   needs: string[];
   steps: Array<CiRunStep | CiDeployStep>;
+  /**
+   * Raw env values — may still contain `${{ secrets.NAME }}`; CiDO resolves
+   * them at run time (ci/secrets.ts `resolveJobEnv`).
+   */
   env: Record<string, string>;
+  /** Canonical names of the secrets this job's env references (declaration order). */
+  secrets: string[];
   /** Wall-clock budget for the whole job (all steps cumulative). */
   timeoutMinutes: number;
 }
@@ -93,10 +104,15 @@ function parseJob(name: string, cfg: { [k: string]: YamlValue }): { job?: CiJob;
     .filter((s): s is string => !!s);
 
   const env: Record<string, string> = {};
+  const secrets: string[] = [];
   if (isObj(cfg.env)) {
     for (const [k, v] of Object.entries(cfg.env)) {
       const s = asString(v);
-      if (s !== undefined) env[k] = s;
+      if (s === undefined) continue;
+      const refs = secretRefsIn(s);
+      if (refs.error) return { error: `job "${name}": env ${k}: ${refs.error}` };
+      for (const n of refs.names) if (!secrets.includes(n)) secrets.push(n);
+      env[k] = s;
     }
   }
 
@@ -117,11 +133,24 @@ function parseJob(name: string, cfg: { [k: string]: YamlValue }): { job?: CiJob;
     if (raw.run !== undefined) {
       const command = asString(raw.run)?.trim();
       if (!command) return { error: `job "${name}": empty run step` };
+      if (containsSecretRef(command)) {
+        // Splicing a secret into the command would put it in the sandbox
+        // process's argv (visible to every process there, and in our step
+        // labels/logs). Secrets travel by env only.
+        return {
+          error:
+            `job "${name}": \`\${{ secrets.* }}\` isn't allowed in run: — map it in the ` +
+            `job's env: (e.g. \`NPM_TOKEN: \${{ secrets.NPM_TOKEN }}\`) and use $NPM_TOKEN`,
+        };
+      }
       steps.push({ type: "run", command });
       continue;
     }
     const dcfg = raw["cloudflare/deploy"];
     if (isObj(dcfg)) {
+      if (containsSecretRef(JSON.stringify(dcfg))) {
+        return { error: `job "${name}": \`\${{ secrets.* }}\` isn't supported in cloudflare/deploy steps` };
+      }
       const parsed = parseDeployStepConfig(dcfg);
       if (parsed.error || !parsed.step) {
         return { error: `job "${name}": ${parsed.error ?? "invalid cloudflare/deploy step"}` };
@@ -144,8 +173,16 @@ function parseJob(name: string, cfg: { [k: string]: YamlValue }): { job?: CiJob;
     };
   }
 
+  if (hasDeploy && secrets.length > 0) {
+    return {
+      error:
+        `job "${name}": secrets in env: only reach run jobs — deploy jobs use the ` +
+        `Worker's CF_DEPLOY_TOKEN (\`gitflare deploy enable\`)`,
+    };
+  }
+
   return {
-    job: { name, kind: hasDeploy ? "deploy" : "run", needs, steps, env, timeoutMinutes },
+    job: { name, kind: hasDeploy ? "deploy" : "run", needs, steps, env, secrets, timeoutMinutes },
   };
 }
 

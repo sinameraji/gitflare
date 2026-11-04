@@ -19,6 +19,12 @@ export interface ImportReport {
   dropped: Array<{ workflow: string; job?: string | undefined; reason: string }>;
   /** things translated with a caveat, or steps removed inside a kept job */
   warnings: Array<{ workflow: string; job?: string | undefined; step?: string | undefined; note: string }>;
+  /**
+   * Secret names the generated ci.yml references (`${{ secrets.NAME }}`,
+   * canonical upper case) — each must be set with `gitflare secrets set NAME`
+   * before the first run, or the job fails.
+   */
+  secrets: string[];
 }
 
 export interface ImportResult {
@@ -52,6 +58,22 @@ const KNOWN_DROP_ACTIONS: Array<{ re: RegExp; note?: string }> = [
   { re: /^actions\/download-artifact(@|$)/, note: "jobs in one GitFlare run share a workspace, so artifacts need no download" },
 ];
 
+/** A whole `${{ secrets.NAME }}` reference (GitHub names are case-insensitive). */
+const SECRET_REF_RE = /\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+/** Anything that starts like a secrets reference — complex ones don't match SECRET_REF_RE. */
+const ANY_SECRET_RE = /\$\{\{\s*secrets\./;
+
+/** GitFlare's canonical form of every simple secret reference in `v`. */
+function canonicalSecretRefs(v: string): string {
+  return v.replace(SECRET_REF_RE, (_m, n: string) => `\${{ secrets.${n.toUpperCase()} }}`);
+}
+
+function secretNote(name: string): string | undefined {
+  return name === "GITHUB_TOKEN"
+    ? "`secrets.GITHUB_TOKEN` is GitHub's automatic per-run token — GitFlare has no equivalent; set a PAT with `gitflare secrets set GITHUB_TOKEN` if the job needs one"
+    : undefined;
+}
+
 const EXPR_MAP: Array<[RegExp, string]> = [
   [/\$\{\{\s*github\.sha\s*\}\}/g, "$GITFLARE_SHA"],
   [/\$\{\{\s*github\.ref_name\s*\}\}/g, "$GITFLARE_BRANCH"],
@@ -60,7 +82,7 @@ const EXPR_MAP: Array<[RegExp, string]> = [
 ];
 
 export function importActionsWorkflows(files: WorkflowFile[]): ImportResult {
-  const report: ImportReport = { translated: [], dropped: [], warnings: [] };
+  const report: ImportReport = { translated: [], dropped: [], warnings: [], secrets: [] };
   const jobs: OutJob[] = [];
   let branches: string[] | null = null;
   const jobOwner = new Map<string, string>(); // job name → workflow (for collisions)
@@ -131,6 +153,16 @@ export function importActionsWorkflows(files: WorkflowFile[]): ImportResult {
     if (missing.length) {
       report.warnings.push({ workflow: jobOwner.get(j.name) ?? "", job: j.name, note: `\`needs\` references dropped/unknown job(s) ${missing.join(", ")} — removed from needs` });
       j.needs = j.needs.filter((n) => names.has(n));
+    }
+  }
+
+  // The secrets the emitted ci.yml actually references (dropped jobs don't count).
+  for (const j of jobs) {
+    for (const v of Object.values(j.env)) {
+      for (const m of v.matchAll(SECRET_REF_RE)) {
+        const n = m[1]!.toUpperCase();
+        if (!report.secrets.includes(n)) report.secrets.push(n);
+      }
     }
   }
 
@@ -249,9 +281,35 @@ function translateJob(workflow: string, rawName: string, job: Any, report: Impor
       const stepEnv: string[] = [];
       for (const [k, v] of Object.entries((st.env ?? {}) as Any)) {
         const val = envValue(String(v), workflow, rawName, label, report);
-        if (val !== null) stepEnv.push(`export ${k}=${shellQuote(val)}`);
+        if (val === null) continue;
+        if (ANY_SECRET_RE.test(val)) {
+          // A secret can't be `export`ed inside the script (that would put its
+          // value in the command text). GitFlare injects secrets per JOB, so
+          // hoist this one into the job's env:.
+          if (hoistEnv(env, k, val)) {
+            report.warnings.push({ workflow, job: rawName, step: label, note: `step env ${k} (a secret) moved to the job's env: — GitFlare injects secrets per job, so every step of the job now sees it` });
+          } else {
+            report.warnings.push({ workflow, job: rawName, step: label, note: `step env ${k} (a secret) conflicts with a different job-level ${k} — left OUT; split the step into its own job` });
+          }
+          continue;
+        }
+        stepEnv.push(`export ${k}=${shellQuote(val)}`);
       }
-      if (/\$\{\{/.test(script)) {
+      // `${{ secrets.X }}` spliced straight into the script → an env var the
+      // job maps from the secret (GitFlare never puts secrets in a command).
+      script = script.replace(SECRET_REF_RE, (_m, raw: string) => {
+        const name = raw.toUpperCase();
+        const ref = `\${{ secrets.${name} }}`;
+        const varName = hoistEnv(env, name, ref) ? name : hoistEnv(env, `GITFLARE_SECRET_${name}`, ref) ? `GITFLARE_SECRET_${name}` : null;
+        if (!varName) return _m;
+        const special = secretNote(name);
+        if (special) report.warnings.push({ workflow, job: rawName, step: label, note: special });
+        report.warnings.push({ workflow, job: rawName, step: label, note: `\`${_m}\` in the script → \`\${${varName}}\` (mapped from the secret in the job's env:)` });
+        return `\${${varName}}`;
+      });
+      if (ANY_SECRET_RE.test(script)) {
+        report.warnings.push({ workflow, job: rawName, step: label, note: "contains a `${{ secrets.… }}` expression GitFlare can't translate (only plain `secrets.NAME` maps) — ci.yml will fail to parse until you map it in env: by hand" });
+      } else if (/\$\{\{/.test(script)) {
         report.warnings.push({ workflow, job: rawName, step: label, note: "contains `${{ … }}` expressions GitFlare can't evaluate — left in place; edit by hand" });
       }
       if (/\$GITHUB_OUTPUT|\$GITHUB_ENV|\$GITHUB_STEP_SUMMARY/.test(script)) {
@@ -293,18 +351,44 @@ function translateJob(workflow: string, rawName: string, job: Any, report: Impor
     report.translated.push({ workflow, job: `${rawName} (deploy)`, steps: depJob.steps.length, kind: "deploy" });
     return [runJob, depJob];
   }
+  if (hasDeploy) {
+    // Deploy jobs ship with the Worker's CF_DEPLOY_TOKEN; ci.yml rejects
+    // secrets on them (they'd go nowhere).
+    for (const [k, v] of Object.entries(env)) {
+      if (!ANY_SECRET_RE.test(v)) continue;
+      delete env[k];
+      report.warnings.push({ workflow, job: rawName, note: `env ${k} (a secret) dropped — GitFlare deploy jobs use the token from \`gitflare deploy enable\`, not job secrets` });
+    }
+  }
   report.translated.push({ workflow, job: rawName, steps: steps.length, kind: hasDeploy ? "deploy" : "run" });
   return [{ name, needs, env, timeoutMinutes: timeout, steps }];
 }
 
+/** Set env[k] = v unless a DIFFERENT value is already there. */
+function hoistEnv(env: Record<string, string>, k: string, v: string): boolean {
+  if (env[k] !== undefined && env[k] !== v) return false;
+  env[k] = v;
+  return true;
+}
+
 function envValue(v: string, workflow: string, job: string, step: string | undefined, report: ImportReport): string | null {
-  if (/\$\{\{\s*secrets\./.test(v)) {
-    report.warnings.push({ workflow, job, step, note: `env uses \`${v.trim()}\` — GitFlare CI has no secrets store yet; the variable was left OUT (M10)` });
-    return null;
+  if (ANY_SECRET_RE.test(v)) {
+    // Plain `${{ secrets.NAME }}` maps 1:1 onto GitFlare's syntax; anything
+    // fancier (`secrets.A || secrets.B`, `secrets[...]`) is left out.
+    const remainder = v.replace(SECRET_REF_RE, "");
+    if (ANY_SECRET_RE.test(remainder)) {
+      report.warnings.push({ workflow, job, step, note: `env uses \`${v.trim()}\` — only plain \`\${{ secrets.NAME }}\` references translate; the variable was left OUT` });
+      return null;
+    }
+    v = canonicalSecretRefs(v);
+    for (const m of v.matchAll(SECRET_REF_RE)) {
+      const note = secretNote(m[1]!);
+      if (note) report.warnings.push({ workflow, job, step, note });
+    }
   }
   let out = v;
   for (const [re, rep] of EXPR_MAP) out = out.replace(re, rep);
-  if (/\$\{\{/.test(out)) report.warnings.push({ workflow, job, step, note: `env value \`${v.trim()}\` contains an expression GitFlare can't evaluate — kept verbatim` });
+  if (/\$\{\{/.test(out.replace(SECRET_REF_RE, ""))) report.warnings.push({ workflow, job, step, note: `env value \`${v.trim()}\` contains an expression GitFlare can't evaluate — kept verbatim` });
   return out;
 }
 
@@ -345,7 +429,16 @@ function shellQuote(s: string): string {
 function yStr(s: string): string {
   // Quote when the parser could misread it; keep simple scalars bare.
   if (/^[A-Za-z0-9_./:@+-][A-Za-z0-9_./:@+ -]*$/.test(s) && !/^(true|false|null|yes|no|on|off)$/i.test(s) && !/^\d/.test(s)) return s;
+  // The Worker's YAML subset strips the quotes but does NOT process escapes,
+  // so a JSON-escaped `\"` or `\\` would reach the job verbatim. Single quotes
+  // carry such strings unchanged (when they hold no `'` themselves).
+  if (/["\\]/.test(s) && !s.includes("'")) return `'${s}'`;
   return JSON.stringify(s);
+}
+
+/** Needs a `|` block to survive the Worker's escape-less quoted scalars. */
+function needsBlock(s: string): boolean {
+  return s.includes("\n") || (/["\\]/.test(s) && yStr(s).startsWith('"'));
 }
 
 export function emitCiYml(branches: string[], jobs: OutJob[]): string {
@@ -366,7 +459,7 @@ export function emitCiYml(branches: string[], jobs: OutJob[]): string {
     L.push("    steps:");
     for (const s of j.steps) {
       if ("run" in s) {
-        if (s.run.includes("\n")) {
+        if (needsBlock(s.run)) {
           L.push("      - run: |");
           for (const line of s.run.split("\n")) L.push(line.length ? `          ${line}` : "");
         } else {
@@ -397,6 +490,10 @@ export function formatReport(r: ImportReport): string {
   if (r.dropped.length) {
     out.push(`✗ ${r.dropped.length} dropped:`);
     for (const d of r.dropped) out.push(`    ${d.workflow}${d.job ? ` › ${d.job}` : ""}: ${d.reason}`);
+  }
+  if (r.secrets.length) {
+    out.push(`◆ ${r.secrets.length} secret(s) referenced — set each before the first run (or its job fails):`);
+    for (const n of r.secrets) out.push(`    gitflare secrets set ${n}`);
   }
   return out.join("\n");
 }

@@ -8,6 +8,7 @@ import { runSyncEnable, runSyncDisable, runSyncNow, runSyncStatus, runSyncTags, 
 import { runRemoteAdd, runRemoteRemove, runCredentialHelper } from "./commands/remote.js";
 import { runCiImport } from "./commands/import.js";
 import { runLogs } from "./commands/logs.js";
+import { runSecretsSet, runSecretsList, runSecretsRm } from "./commands/secrets.js";
 import {
   runDeployEnable,
   runDeployDisable,
@@ -128,6 +129,25 @@ program
   .option("-f, --follow", "keep printing new lines until the run finishes (exit 1 if it failed)")
   .option("--repo <repo>", "github full name or artifacts repo name; prompts if omitted")
   .action(runLogs);
+
+const secrets = program
+  .command("secrets")
+  .description("CI secrets: values your .gitflare/ci.yml jobs read as ${{ secrets.NAME }} in env:");
+secrets.command("set")
+  .description("Set a CI secret (value from stdin when piped, else a hidden prompt — never from argv)")
+  .argument("<name>", "secret name, e.g. NPM_TOKEN (case-insensitive)")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runSecretsSet);
+secrets.command("list")
+  .description("List CI secret names (values are write-only)")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runSecretsList);
+secrets.command("rm")
+  .alias("remove")
+  .description("Delete a CI secret")
+  .argument("<name>", "secret name")
+  .argument("[repo]", "github full name or artifacts repo name; prompts if omitted")
+  .action(runSecretsRm);
 
 const sync = program
   .command("sync")
