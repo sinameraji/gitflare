@@ -25,6 +25,8 @@ import {
 } from "../ci/sandbox-runner";
 import { postCommitStatus, type CommitState } from "../ci/github-status";
 import { interpretDeployResponse } from "../ci/delegation";
+import { jobCommitStatus } from "../ci/job-status";
+import { sliceRunLogs } from "../ci/logs";
 import { deployStubFor, type DeployRecord } from "./deploy";
 
 const MAX_LOG_LINES = 500;
@@ -54,6 +56,9 @@ export interface CiRunRecord {
   status: "running" | "success" | "failed" | "skipped";
   jobs: CiJobRecord[];
   logs: string[];
+  // Total lines ever logged for this run (logs[] keeps only the newest
+  // MAX_LOG_LINES) — the cursor `gitflare logs --follow` resumes from.
+  logSeq?: number;
   message?: string;
   // For the watchdog + late status posts (records outlive in-memory state).
   deadlineAt?: number;
@@ -92,6 +97,12 @@ export class CiDO {
   // push records "skipped" instead of burning a sandbox. In-memory only:
   // best-effort, and an evicted queue has nothing left to supersede anyway.
   private latestPushSha = new Map<string, string>();
+  // Runs whose commit-status post already failed: log the reason once, and
+  // after a network-level failure (GitHub unreachable) stop posting per-job
+  // statuses for the run so each job doesn't wait out a timeout. The overall
+  // `gitflare/ci` status is still attempted.
+  private statusWarned = new Set<number>();
+  private githubUnreachable = new Set<number>();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -137,6 +148,10 @@ export class CiDO {
       return Response.json({ accepted: true, runId: this.current.id }, { status: 202 });
     }
 
+    if (request.method === "GET" && url.pathname === "/logs") {
+      return this.logsResponse(url);
+    }
+
     if (request.method === "GET" && url.pathname === "/state") {
       return Response.json({ runs: await this.history() });
     }
@@ -171,8 +186,13 @@ export class CiDO {
       run.message = pastDeadline
         ? "watchdog: run exceeded its wall-clock budget"
         : "interrupted (worker restarted mid-run)";
+      const cut: CiJobRecord[] = [];
       for (const j of run.jobs) {
-        if (j.status === "running" || j.status === "pending") j.status = "skipped";
+        if (j.status === "running" || j.status === "pending") {
+          j.status = "skipped";
+          j.message ??= pastDeadline ? "watchdog: run over budget" : "run interrupted";
+          cut.push(j);
+        }
       }
       // Write the terminal state BEFORE marking it finalized (record() no-ops
       // for finalized ids), then fence off the live pipeline so it can't
@@ -181,7 +201,10 @@ export class CiDO {
       this.finalizedRunIds.add(run.id);
       this.broadcast({ type: "done", record: run });
       await this.destroySandbox(run.id).catch(() => undefined);
-      await this.postStatus(run, "failure", run.message);
+      // force: the run is fenced (finalized) now, which would otherwise make
+      // postStatus a no-op — but these posts ARE the watchdog's verdict.
+      await this.postStatus(run, "failure", run.message, { force: true });
+      for (const j of cut) await this.postJobStatus(run, j, { force: true });
       if (isCurrent) this.current = null;
     }
   }
@@ -202,6 +225,7 @@ export class CiDO {
   private log(line: string): void {
     if (!this.current) return;
     const stamped = `${new Date().toISOString()}  ${line}`;
+    this.current.logSeq = (this.current.logSeq ?? this.current.logs.length) + 1;
     this.current.logs.push(stamped);
     if (this.current.logs.length > MAX_LOG_LINES) this.current.logs.shift();
     this.broadcast({ type: "log", line: stamped });
@@ -254,6 +278,9 @@ export class CiDO {
     };
     this.current = rec;
     this.cancelRequested = false;
+    // Runs are serialized; only the current run's status bookkeeping matters.
+    this.statusWarned.clear();
+    this.githubUnreachable.clear();
     await this.record(rec);
     // Arm a short fallback alarm if none is set, so an eviction between here
     // and runPipeline's real deadline alarm still gets this run failed by the
@@ -293,23 +320,89 @@ export class CiDO {
     rec: CiRunRecord,
     state: CommitState,
     description: string,
+    opts: { context?: string; targetUrl?: string; force?: boolean } = {},
   ): Promise<void> {
     // Soft-fail by construction: GitHub being down is gitflare's raison d'être.
     // But surface WHY a status didn't post (e.g. an expired GITHUB_TOKEN) in
     // the run log instead of vanishing silently.
-    if (this.finalizedRunIds.has(rec.id)) return;
+    if (!opts.force && this.finalizedRunIds.has(rec.id)) return;
     if (!rec.githubFullName || !/^[0-9a-f]{40}$/.test(rec.sha)) return;
+    const targetUrl = opts.targetUrl ?? rec.statusTargetUrl;
     const res = await postCommitStatus({
       githubFullName: rec.githubFullName,
       sha: rec.sha,
       state,
       description,
       token: this.env.GITHUB_TOKEN,
-      ...(rec.statusTargetUrl ? { targetUrl: rec.statusTargetUrl } : {}),
+      ...(opts.context ? { context: opts.context } : {}),
+      ...(targetUrl ? { targetUrl } : {}),
     }).catch((e) => ({ ok: false, status: 0, detail: (e as Error).message }));
     if (!res.ok) {
-      this.log(`github commit status (${state}) not posted: ${res.status} ${res.detail ?? ""} — check GITHUB_TOKEN`.trimEnd());
+      if (res.status === 0) this.githubUnreachable.add(rec.id);
+      if (!this.statusWarned.has(rec.id)) {
+        this.statusWarned.add(rec.id);
+        this.log(
+          `github commit status (${opts.context ?? "gitflare/ci"} ${state}) not posted: ${res.status} ${res.detail ?? ""} — check GITHUB_TOKEN`.trimEnd(),
+        );
+      }
     }
+  }
+
+  /** Per-job status `gitflare/ci/<job>` (M10), linking to that job's log. */
+  private async postJobStatus(rec: CiRunRecord, job: CiJobRecord, opts: { force?: boolean } = {}): Promise<void> {
+    if (this.githubUnreachable.has(rec.id)) return;
+    const post = jobCommitStatus(job, rec.id, rec.statusTargetUrl);
+    if (!post) return;
+    await this.postStatus(rec, post.state, post.description, {
+      context: post.context,
+      ...(post.targetUrl ? { targetUrl: post.targetUrl } : {}),
+      ...(opts.force ? { force: true } : {}),
+    });
+  }
+
+  /** GET /logs?run=<id|latest>&job=&after= — backs `gitflare logs`. */
+  private async logsResponse(url: URL): Promise<Response> {
+    const runParam = url.searchParams.get("run") ?? "latest";
+    const job = url.searchParams.get("job") || undefined;
+    const after = Number(url.searchParams.get("after") ?? "0") || 0;
+    let rec: CiRunRecord | undefined;
+    if (runParam === "latest") {
+      rec = this.current ?? (await this.history())[0];
+    } else {
+      const id = Number(runParam);
+      rec =
+        this.current?.id === id
+          ? this.current
+          : await this.state.storage.get<CiRunRecord>(`run:${String(id).padStart(10, "0")}`);
+    }
+    if (!rec) {
+      return Response.json(
+        { error: runParam === "latest" ? "no CI runs yet" : `run #${runParam} not found` },
+        { status: 404 },
+      );
+    }
+    if (job && !rec.jobs.some((j) => j.name === job)) {
+      return Response.json(
+        { error: `run #${rec.id} has no job "${job}"`, jobs: rec.jobs.map((j) => j.name) },
+        { status: 404 },
+      );
+    }
+    const slice = sliceRunLogs(rec, { ...(job ? { job } : {}), after });
+    return Response.json({
+      run: {
+        id: rec.id,
+        branch: rec.branch,
+        sha: rec.sha,
+        mode: rec.mode,
+        status: rec.status,
+        startedAt: rec.startedAt,
+        ...(rec.finishedAt ? { finishedAt: rec.finishedAt } : {}),
+        ...(rec.message ? { message: rec.message } : {}),
+        jobs: rec.jobs.map((j) => ({ name: j.name, status: j.status, ...(j.message ? { message: j.message } : {}) })),
+      },
+      ...slice,
+      done: rec.status !== "running",
+    });
   }
 
   private sandboxName(runId: number): string {
@@ -534,6 +627,7 @@ export class CiDO {
         if (this.cancelRequested) {
           jr.status = "skipped";
           jr.message = "cancelled";
+          await this.postJobStatus(rec, jr);
           continue;
         }
         const blocked = job.needs.find((n) => statusOf(n) !== "success");
@@ -542,12 +636,14 @@ export class CiDO {
           jr.message = `dependency "${blocked}" ${statusOf(blocked)}`;
           this.log(`[${job.name}] skipped — ${jr.message}`);
           await this.record(rec);
+          await this.postJobStatus(rec, jr);
           continue;
         }
 
         jr.status = "running";
         await this.record(rec);
         this.log(`[${job.name}] started (${job.kind} job)`);
+        await this.postJobStatus(rec, jr);
 
         // Only hand a deploy job the sandbox-built artifact when every run job
         // it transitively `needs` actually succeeded — otherwise the workspace
@@ -587,6 +683,7 @@ export class CiDO {
         if (!outcome.ok && !failedJob) failedJob = job.name;
         this.log(`[${job.name}] ${outcome.ok ? "✓ success" : `✗ failed${outcome.message ? ` — ${outcome.message}` : ""}`}`);
         await this.record(rec);
+        await this.postJobStatus(rec, jr);
       }
     } finally {
       if (sandboxCreated) {

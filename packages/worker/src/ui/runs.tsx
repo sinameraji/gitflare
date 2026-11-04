@@ -2,11 +2,16 @@ import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { LOGO_PNG_DATA_URL } from "./logo-data";
 import type { CiRunRecord } from "../durable-objects/ci";
+import { sliceRunLogs } from "../ci/logs";
 
 interface Props {
   githubFullName: string;
   artifactsRepoName: string;
   runs: CiRunRecord[];
+  // `?run=<id>&job=<name>`: show that run's log (filtered to one job) instead
+  // of the latest run's. Per-job commit statuses link here.
+  selectedRun?: CiRunRecord;
+  selectedJob?: string;
   ciEnabled: boolean;
   // Cancel from the dashboard is only offered when Cloudflare Access gates the
   // page (otherwise anyone could kill runs on a public mirror — use the CLI).
@@ -154,7 +159,9 @@ export const Runs: FC<Props> = (p) => (
                 <tbody>
                   {p.runs.map((r) => (
                     <tr>
-                      <td class="mono muted">{r.id}</td>
+                      <td class="mono muted">
+                        <a href={`/r/${p.artifactsRepoName}/ci?run=${r.id}#logs`}>{r.id}</a>
+                      </td>
                       <td class="mono">{r.branch}</td>
                       <td class="mono">{r.sha.slice(0, 8)}</td>
                       <td class="mono muted">{r.mode}</td>
@@ -162,9 +169,13 @@ export const Runs: FC<Props> = (p) => (
                         {r.jobs.length === 0
                           ? "—"
                           : r.jobs.map((j) => (
-                              <span title={j.message ?? j.status} style="margin-right: 8px;">
+                              <a
+                                href={`/r/${p.artifactsRepoName}/ci?run=${r.id}&job=${encodeURIComponent(j.name)}#logs`}
+                                title={j.message ?? j.status}
+                                style="margin-right: 8px; color: inherit;"
+                              >
                                 {j.name} {JOB_GLYPH[j.status] ?? "?"}
-                              </span>
+                              </a>
                             ))}
                       </td>
                       <td>
@@ -182,9 +193,23 @@ export const Runs: FC<Props> = (p) => (
             </div>
           )}
 
-          {p.runs[0] && p.runs[0].logs.length > 0 ? (
+          {p.selectedRun ? (
             <>
-              <h2>Latest log (#{p.runs[0].id})</h2>
+              <h2 id="logs">
+                Log (#{p.selectedRun.id}
+                {p.selectedJob ? ` · ${p.selectedJob}` : ""})
+              </h2>
+              <pre
+                class="mono"
+                style="margin: 0; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; max-height: 480px; overflow: auto; font-size: 12px; line-height: 1.5;"
+              >
+                {sliceRunLogs(p.selectedRun, p.selectedJob ? { job: p.selectedJob } : {}).lines.join("\n") ||
+                  "(no log lines for this job — it may not have started, or older lines were dropped)"}
+              </pre>
+            </>
+          ) : p.runs[0] && p.runs[0].logs.length > 0 ? (
+            <>
+              <h2 id="logs">Latest log (#{p.runs[0].id})</h2>
               <pre
                 class="mono"
                 style="margin: 0; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; max-height: 320px; overflow: auto; font-size: 12px; line-height: 1.5;"

@@ -206,7 +206,7 @@ export async function runCiDisable(repoArg: string | undefined): Promise<void> {
 
 // --- control-plane commands (talk to the Worker's /control/* endpoints) ---
 
-function ciSecret(entry: RepoEntry): string | undefined {
+export function ciSecret(entry: RepoEntry): string | undefined {
   if (!entry.ci || !entry.ci.enabled) {
     p.log.warn(`CI isn't enabled for ${kleur.cyan(entry.githubFullName)}. Run \`gitflare ci enable\`.`);
     return undefined;
@@ -214,7 +214,7 @@ function ciSecret(entry: RepoEntry): string | undefined {
   return entry.ci?.controlSecret ?? entry.deploy?.controlSecret;
 }
 
-async function controlFetch(
+export async function controlFetch(
   entry: RepoEntry,
   secret: string,
   path: string,

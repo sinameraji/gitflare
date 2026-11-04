@@ -20,6 +20,8 @@ import { NotFound, ErrorView } from "./ui/states";
 import { accessGuard, type AccessVariables } from "./access/middleware";
 import { deployStubFor, type DeployRecord } from "./durable-objects/deploy";
 import { ciStubFor, type CiRunRecord } from "./durable-objects/ci";
+import { controlAuthorized } from "./control/auth";
+import { ciLogsHandler } from "./control/ci-logs";
 
 export { RepoDO } from "./durable-objects/repo";
 export { DeployDO } from "./durable-objects/deploy";
@@ -415,11 +417,17 @@ app.get("/r/:name/ci", async (c) => {
   } catch {
     // Soft fail — show an empty list.
   }
+  // `?run=<id>&job=<name>` — the per-job commit status links here.
+  const runParam = Number(c.req.query("run"));
+  const selectedRun = Number.isInteger(runParam) ? runs.find((r) => r.id === runParam) : undefined;
+  const selectedJob = c.req.query("job") || undefined;
   return c.html(
     <Runs
       githubFullName={repo.githubFullName}
       artifactsRepoName={name}
       runs={runs}
+      {...(selectedRun ? { selectedRun } : {})}
+      {...(selectedJob ? { selectedJob } : {})}
       ciEnabled={c.env.CI_ENABLED === "1"}
       canCancel={!!c.env.ACCESS_AUD}
       version={c.env.GITFLARE_VERSION ?? "0.0.0"}
@@ -461,16 +469,6 @@ app.post("/r/:name/ci/cancel", async (c) => {
 // ---- Control plane (CLI → Worker), authed by CONTROL_SECRET, not Access ----
 // Mirrors how /webhooks/github sits outside Access with its own auth.
 
-function controlAuthorized(c: { req: { header: (n: string) => string | undefined }; env: Env }): boolean {
-  const secret = c.env.CONTROL_SECRET;
-  if (!secret) return false;
-  const auth = c.req.header("Authorization") ?? "";
-  const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (provided.length !== secret.length) return false;
-  let diff = 0;
-  for (let i = 0; i < secret.length; i++) diff |= provided.charCodeAt(i) ^ secret.charCodeAt(i);
-  return diff === 0;
-}
 
 app.post("/control/deploy/run", async (c) => {
   if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
@@ -554,6 +552,9 @@ app.get("/control/ci/runs", async (c) => {
   const resp = await stub.fetch("https://ci-do/state");
   return c.json(resp.ok ? ((await resp.json()) as object) : { runs: [] });
 });
+
+// Job logs for `gitflare logs` (latest run by default; `after` resumes a follow).
+app.get("/control/ci/logs", ciLogsHandler(ciStubFor));
 
 app.post("/control/ci/cancel", async (c) => {
   if (!controlAuthorized(c)) return c.json({ error: "unauthorized" }, 401);
