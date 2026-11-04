@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { importActionsWorkflows, deployFromWranglerCommand } from "../src/actions-import.js";
+import { importActionsWorkflows, deployFromWranglerCommand, formatReport } from "../src/actions-import.js";
 import { parseCiWorkflow } from "../../worker/src/ci/workflow";
 
 const wf = (name: string, text: string) => ({ name, text });
@@ -58,14 +58,14 @@ describe("importActionsWorkflows", () => {
     expect(y).toContain("branches: [main]");
     expect(y).toContain("timeout_minutes: 60"); // capped
     expect(y).toContain("NODE_ENV: test");
-    expect(y).not.toContain("TOKEN"); // secret dropped
+    expect(y).toContain('TOKEN: "${{ secrets.NPM_TOKEN }}"'); // secret translated 1:1
+    expect(r.report.secrets).toEqual(["NPM_TOKEN"]);
     expect(y).toContain("npm i -g pnpm@9"); // pnpm/action-setup → run
     expect(y).not.toContain("actions/checkout");
     expect(y).toContain("cd packages/worker");
     expect(y).toContain("export CI=1");
     expect(y).toContain("echo $GITFLARE_SHA"); // expression mapped
     const notes = r.report.warnings.map((w) => w.note).join("\n");
-    expect(notes).toContain("secrets store");
     expect(notes).toContain("some/thirdparty@v1");
     expect(notes).toContain("timeout-minutes capped");
     expect(notes).toContain("other triggers ignored: pull_request");
@@ -74,6 +74,7 @@ describe("importActionsWorkflows", () => {
     expect(parsed.error).toBeUndefined();
     expect(parsed.workflow?.jobs.map((j) => j.name)).toEqual(["build"]);
     expect(parsed.workflow?.jobs[0]?.steps).toHaveLength(3); // pnpm install, pnpm install --frozen, test block
+    expect(parsed.workflow?.jobs[0]?.secrets).toEqual(["NPM_TOKEN"]);
   });
 
   it("turns `wrangler pages deploy` into a cloudflare/deploy job and drops the wrangler install", () => {
@@ -122,6 +123,115 @@ describe("importActionsWorkflows", () => {
     const r = importActionsWorkflows([wf("bad.yml", "on: [push\njobs: :")]);
     expect(r.jobCount).toBe(0);
     expect(r.report.dropped[0]?.reason).toContain("could not parse YAML");
+  });
+});
+
+describe("importActionsWorkflows — secrets", () => {
+  const SECRETS = `
+on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: \${{ secrets.npm_token }}
+      FANCY: \${{ secrets.A || secrets.B }}
+    steps:
+      - run: npm ci
+      - name: Upload
+        env:
+          API_KEY: \${{ secrets.API_KEY }}
+          AUTH: Bearer \${{ secrets.API_KEY }}
+          PLAIN: x
+        run: ./upload.sh
+      - run: echo "\${{ secrets.DOCKER_PASSWORD }}" | docker login -u me --password-stdin
+      - run: gh release create --repo x \${{ secrets.GITHUB_TOKEN }}
+`;
+
+  it("translates secret refs to GitFlare's env syntax, hoists step env, maps script refs, lists what to set", () => {
+    const r = importActionsWorkflows([wf("pub.yml", SECRETS)]);
+    const y = r.ciYml;
+    // job env: canonical upper-case name; the complex expression is left out
+    expect(y).toContain('NPM_TOKEN: "${{ secrets.NPM_TOKEN }}"');
+    expect(y).not.toContain("FANCY");
+    // step env secrets hoisted to the job; plain step env stays an export
+    expect(y).toContain('API_KEY: "${{ secrets.API_KEY }}"');
+    expect(y).toContain('AUTH: "Bearer ${{ secrets.API_KEY }}"');
+    expect(y).toContain("export PLAIN=x");
+    expect(y).not.toMatch(/export (API_KEY|AUTH)/);
+    // script refs become env vars mapped from the secret
+    expect(y).toContain('DOCKER_PASSWORD: "${{ secrets.DOCKER_PASSWORD }}"');
+    const cmds = parseCiWorkflow(y).workflow!.jobs[0]!.steps.map((st) => (st.type === "run" ? st.command : ""));
+    expect(cmds).toContain('echo "${DOCKER_PASSWORD}" | docker login -u me --password-stdin');
+    expect(cmds).toContain("gh release create --repo x ${GITHUB_TOKEN}");
+    expect(r.report.secrets.sort()).toEqual(["API_KEY", "DOCKER_PASSWORD", "GITHUB_TOKEN", "NPM_TOKEN"]);
+    const notes = r.report.warnings.map((w) => w.note).join("\n");
+    expect(notes).toContain("only plain `${{ secrets.NAME }}` references translate");
+    expect(notes).toContain("moved to the job's env:");
+    expect(notes).toContain("GitHub's automatic per-run token");
+    expect(notes).not.toContain("no secrets store");
+    // Round trip: the Worker parser accepts it and sees the same secrets.
+    const parsed = parseCiWorkflow(y);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.workflow!.jobs[0]!.secrets.sort()).toEqual(r.report.secrets.sort());
+    // and nothing secret-shaped is left in a run: command
+    for (const st of parsed.workflow!.jobs[0]!.steps) {
+      if (st.type === "run") expect(st.command).not.toContain("secrets.");
+    }
+    expect(formatReport(r.report)).toContain("gitflare secrets set NPM_TOKEN");
+  });
+
+  it("uses a prefixed env var when the secret's name is taken by a different job env value", () => {
+    const r = importActionsWorkflows([
+      wf("c.yml", `on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: not-a-secret
+    steps:
+      - run: |
+          curl -H "x: \${{ secrets.TOKEN }}" example.com
+`),
+    ]);
+    expect(r.ciYml).toContain("TOKEN: not-a-secret");
+    expect(r.ciYml).toContain('GITFLARE_SECRET_TOKEN: "${{ secrets.TOKEN }}"');
+    expect(r.ciYml).toContain("${GITFLARE_SECRET_TOKEN}");
+    expect(parseCiWorkflow(r.ciYml).error).toBeUndefined();
+  });
+
+  it("drops secret env from deploy-only jobs (they use the Worker's deploy token)", () => {
+    const r = importActionsWorkflows([
+      wf("d.yml", "on: push\njobs:\n  ship:\n    runs-on: ubuntu-latest\n    env:\n      CLOUDFLARE_API_TOKEN: ${{ secrets.CF }}\n    steps:\n      - run: wrangler pages deploy out --project-name=site\n"),
+    ]);
+    expect(r.ciYml).not.toContain("CLOUDFLARE_API_TOKEN");
+    expect(r.report.secrets).toEqual([]);
+    expect(r.report.warnings.map((w) => w.note).join("\n")).toContain("deploy jobs use the token");
+    expect(parseCiWorkflow(r.ciYml).error).toBeUndefined();
+  });
+
+  it("the PAGES fixture's deploy-step secret needs no CI secret", () => {
+    expect(importActionsWorkflows([wf("pages.yml", PAGES)]).report.secrets).toEqual([]);
+  });
+});
+
+describe("emitted YAML round-trips quotes and backslashes", () => {
+  it("keeps \" and \\ intact through the Worker's escape-less parser", () => {
+    const src = `on: push
+jobs:
+  q:
+    runs-on: ubuntu-latest
+    env:
+      MSG: 'say "hi"'
+      BOTH: it's "both"
+    steps:
+      - run: echo "a\\tb" > out.txt
+      - run: printf '%s\\n' "it's"
+`;
+    const r = importActionsWorkflows([wf("q.yml", src)]);
+    const job = parseCiWorkflow(r.ciYml).workflow!.jobs[0]!;
+    expect(job.env.MSG).toBe('say "hi"');
+    const cmds = job.steps.map((st) => (st.type === "run" ? st.command : ""));
+    expect(cmds).toEqual(['echo "a\\tb" > out.txt', `printf '%s\\n' "it's"`]);
   });
 });
 

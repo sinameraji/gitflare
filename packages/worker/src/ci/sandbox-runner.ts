@@ -9,6 +9,7 @@
 // scrubbed for the secret and its Basic-auth encoding before it reaches logs.
 
 import type { CiJob } from "./workflow";
+import { scrubNeedles, utf8Base64 } from "./secrets";
 
 export interface ExecResultLike {
   stdout: string;
@@ -74,14 +75,22 @@ export function gitAuthEnv(tokenSecret: string): Record<string, string> {
 }
 
 /**
- * Returns a scrubber that blanks each secret — and its Basic-auth base64 form —
- * from a log line. Belt-and-suspenders: the secrets shouldn't reach output in
- * the first place, but git error paths are creative.
+ * Returns a scrubber that blanks each secret from a log line: the value, its
+ * Basic-auth form (`x:<secret>`, how the Artifacts token travels), and its
+ * base64 encodings at every byte alignment (see secrets.ts). Used for the
+ * Artifacts read token AND every CI secret. Belt-and-suspenders for the token
+ * (it shouldn't reach output at all); load-bearing for CI secrets, which the
+ * job's own code can print.
  */
 export function makeScrubber(secrets: string[]): (line: string) => string {
-  const needles = secrets
-    .filter((s) => s.length > 0)
-    .flatMap((s) => [s, btoa(`x:${s}`)]);
+  const set = new Set<string>();
+  for (const s of secrets) {
+    if (s.length === 0) continue;
+    for (const n of scrubNeedles(s)) set.add(n);
+    set.add(utf8Base64(`x:${s}`));
+  }
+  // Longest first, so a secret that contains another is blanked whole.
+  const needles = [...set].sort((a, b) => b.length - a.length);
   return (line: string): string => {
     let out = line;
     for (const n of needles) out = out.split(n).join("***");
@@ -188,6 +197,11 @@ export interface RunJobResult {
 
 export interface RunJobParams {
   job: CiJob; // kind "run"
+  /**
+   * The job's env with `${{ secrets.* }}` already resolved (CiDO does that).
+   * Defaults to job.env. Delivered to the sandbox ONLY as exec env.
+   */
+  env?: Record<string, string>;
   meta: { repo: string; branch: string; sha: string };
   log: (line: string) => void;
   now?: () => number;
@@ -224,7 +238,7 @@ export async function runJobSteps(
     GITFLARE_REPO: p.meta.repo,
     GITFLARE_BRANCH: p.meta.branch,
     GITFLARE_SHA: p.meta.sha,
-    ...p.job.env,
+    ...(p.env ?? p.job.env),
   };
 
   let lines = 0;

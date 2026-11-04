@@ -49,7 +49,10 @@ export async function runCiImport(opts: { dir?: string; out?: string; write?: bo
   p.outro(
     [
       `Wrote ${kleur.cyan(outPath)}.`,
-      "  Next: fix anything marked above (deploy project/entry, secrets, ${{ }} expressions), commit it,",
+      "  Next: fix anything marked above (deploy project/entry, ${{ }} expressions), commit it,",
+      ...(result.report.secrets.length
+        ? [`  set its secrets (${result.report.secrets.map((n) => kleur.cyan(`gitflare secrets set ${n}`)).join(", ")}),`]
+        : []),
       `  then ${kleur.cyan("gitflare ci enable")} — from then on every push runs it in your Cloudflare Sandbox.`,
       "  With ci.yml committed, GitHub Actions and GitFlare CI run side by side until you delete the old workflows.",
     ].join("\n"),
