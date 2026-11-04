@@ -86,7 +86,7 @@ export const Commits: FC<CommitsProps> = (p) => (
   </Layout>
 );
 
-function formatAgo(ms: number): string {
+export function formatAgo(ms: number): string {
   const diff = Date.now() - ms;
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;

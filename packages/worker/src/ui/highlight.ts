@@ -139,3 +139,29 @@ export function highlightCode(text: string, path: string): Highlighted | null {
     return null;
   }
 }
+
+/**
+ * Split highlight.js HTML into one fragment per source line, closing spans
+ * that are open at a newline and reopening them on the next line (multi-line
+ * comments and strings), so each line can sit in its own table cell. hljs
+ * emits only `<span class="…">`, `</span>` and entity-escaped text.
+ */
+export function splitHighlightedLines(html: string): string[] {
+  const out: string[] = [];
+  const open: string[] = [];
+  let line = "";
+  const re = /<span[^>]*>|<\/span>|\n|[^<\n]+|</g;
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    const tok = m[0];
+    if (tok === "\n") {
+      out.push(line + "</span>".repeat(open.length));
+      line = open.join("");
+    } else {
+      if (tok.startsWith("<span")) open.push(tok);
+      else if (tok === "</span>") open.pop();
+      line += tok;
+    }
+  }
+  out.push(line + "</span>".repeat(open.length));
+  return out;
+}
