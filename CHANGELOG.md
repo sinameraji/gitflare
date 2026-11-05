@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.6.0...gitflare-v0.7.0) (2026-11-04)
+
+
+### Features
+
+* CI secrets store — `gitflare secrets set/list/rm` + ${{ secrets.NAME }} in ci.yml job env ([98205bb](https://github.com/sinameraji/gitflare/commit/98205bbb0ea3638cdab9d4d749ff5713246d9ade))
+* per-job CI commit statuses (gitflare/ci/&lt;job&gt;) and `gitflare logs` ([5e2fb7a](https://github.com/sinameraji/gitflare/commit/5e2fb7ac898ee0f0ca86f09212cfebbe9dc1350f))
+* **worker:** blame view for files on the mirror (Stage 1 completeness) ([03059e3](https://github.com/sinameraji/gitflare/commit/03059e3d66b60d075657e4ddc6eede9c8b07ec1a))
+* **worker:** blame view for files on the mirror (Stage 1 completeness) ([24a6099](https://github.com/sinameraji/gitflare/commit/24a60999c0e406562f19703c9c12380a892136b0))
+
 ## [0.6.0](https://github.com/sinameraji/gitflare/compare/gitflare-v0.5.0...gitflare-v0.6.0) (2026-08-19)
 
 
